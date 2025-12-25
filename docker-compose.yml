@@ -1,0 +1,169 @@
+version: '3.8'
+
+services:
+  # ============================================================
+  # OMNI2 Bridge Application
+  # ============================================================
+  omni2:
+    build:
+      context: .
+      target: development
+    container_name: omni2-bridge
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount code for hot-reload
+      - .:/app
+      # Mount logs
+      - ./logs:/app/logs
+    environment:
+      # Application
+      - APP_ENV=development
+      - APP_DEBUG=true
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8000
+      - APP_RELOAD=true
+      
+      # Database (use host.docker.internal to reach host PostgreSQL)
+      - DATABASE_HOST=host.docker.internal
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=omni
+      - DATABASE_USER=postgres
+      - DATABASE_PASSWORD=postgres
+      - DATABASE_POOL_SIZE=20
+      - DATABASE_MAX_OVERFLOW=10
+      
+      # Anthropic API
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+      - ANTHROPIC_MAX_TOKENS=4096
+      - ANTHROPIC_TIMEOUT=30
+      
+      # Security
+      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+      - CORS_ENABLED=true
+      
+      # Logging
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+      
+      # MCP Servers (connect to other containers or host)
+      - MCP_ORACLE_ENABLED=true
+      - MCP_ORACLE_URL=http://host.docker.internal:8001
+      - MCP_ORACLE_TIMEOUT=30
+      - MCP_ORACLE_API_KEY=${MCP_ORACLE_API_KEY:-U1f1mzzSvNKhrtntjJeE0O1KUz-7r7TiuR1-ushQXoc}
+      
+      # Slack Bot (optional for Phase 1)
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+    
+    networks:
+      - omni2-network
+    
+    depends_on:
+      - postgres
+    
+    restart: unless-stopped
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ============================================================
+  # PostgreSQL Database (Optional - use if you don't have host DB)
+  # ============================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: omni2-postgres
+    environment:
+      - POSTGRES_DB=omni
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8
+    ports:
+      - "5433:5432"  # Use 5433 on host to avoid conflict with existing PostgreSQL
+    volumes:
+      # Mount init script
+      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+      # Persist data
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - omni2-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # Redis (Phase 2 - for caching and sessions)
+  # ============================================================
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: omni2-redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+  #   networks:
+  #     - omni2-network
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 3
+
+# ============================================================
+# Networks
+# ============================================================
+networks:
+  omni2-network:
+    driver: bridge
+
+# ============================================================
+# Volumes
+# ============================================================
+volumes:
+  postgres-data:
+    driver: local
+  # redis-data:
+  #   driver: local
+
+# ============================================================
+# Usage Instructions
+# ============================================================
+# 1. Build and start all services:
+#    docker-compose up --build
+#
+# 2. Start in background:
+#    docker-compose up -d
+#
+# 3. View logs:
+#    docker-compose logs -f omni2
+#
+# 4. Stop all services:
+#    docker-compose down
+#
+# 5. Stop and remove volumes:
+#    docker-compose down -v
+#
+# 6. Use existing host PostgreSQL instead of container:
+#    - Comment out the postgres service
+#    - Change DATABASE_HOST to host.docker.internal
+#    - Change DATABASE_PORT to your host PostgreSQL port (usually 5432)
+#
+# 7. Access OMNI2:
+#    - API: http://localhost:8000
+#    - Docs: http://localhost:8000/docs
+#    - Health: http://localhost:8000/health
+#
+# 8. Connect to PostgreSQL container:
+#    docker exec -it omni2-postgres psql -U postgres -d omni
+# ============================================================
