@@ -71,7 +71,7 @@ class User(Base):
     audit_logs = relationship("AuditLog", back_populates="user", foreign_keys="AuditLog.user_id")
     teams = relationship("UserTeam", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
-    api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
+    api_keys = relationship("APIKey", back_populates="user", foreign_keys="APIKey.user_id", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', role='{self.role}')>"

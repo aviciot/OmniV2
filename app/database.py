@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import declarative_base
+from sqlalchemy import text
 
 from app.config import settings
 from app.utils.logger import logger
@@ -65,6 +66,7 @@ async def init_db() -> None:
             max_overflow=settings.database.max_overflow,
             pool_pre_ping=True,  # Verify connections before using
             pool_recycle=3600,   # Recycle connections after 1 hour
+            connect_args={"ssl": False},  # Disable SSL for local development
         )
         
         # Create session factory
@@ -78,7 +80,7 @@ async def init_db() -> None:
         
         # Test connection
         async with engine.begin() as conn:
-            await conn.execute("SELECT 1")
+            await conn.execute(text("SELECT 1"))
         
         logger.info("✅ Database connection successful")
         
@@ -153,7 +155,7 @@ async def check_db_health() -> dict:
             }
         
         async with engine.begin() as conn:
-            result = await conn.execute("SELECT version()")
+            result = await conn.execute(text("SELECT version()"))
             version = result.scalar()
         
         return {
@@ -190,5 +192,5 @@ async def execute_raw_sql(sql: str) -> list:
         raise RuntimeError("Database not initialized")
     
     async with engine.begin() as conn:
-        result = await conn.execute(sql)
+        result = await conn.execute(text(sql))
         return [dict(row) for row in result.mappings()]
