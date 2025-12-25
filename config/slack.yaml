@@ -1,0 +1,459 @@
+# ============================================================
+# OMNI2 Slack Bot Configuration
+# ============================================================
+# Configure Slack integration, commands, and responses
+# ============================================================
+
+# Slack App Credentials (from environment variables)
+slack:
+  # OAuth tokens
+  bot_token: "${SLACK_BOT_TOKEN}"        # xoxb-... token
+  app_token: "${SLACK_APP_TOKEN}"        # xapp-... token (for Socket Mode)
+  signing_secret: "${SLACK_SIGNING_SECRET}"
+  
+  # Connection settings
+  socket_mode: true  # Use Socket Mode (no public endpoint needed)
+  port: 3000         # Port for webhook mode (if socket_mode: false)
+  
+  # Bot display
+  bot_name: "OMNI2"
+  bot_icon: ":robot_face:"  # Emoji or custom icon URL
+  
+  # Workspace
+  workspace_id: "${SLACK_WORKSPACE_ID}"  # Optional
+
+# ============================================================
+# Slash Commands
+# ============================================================
+commands:
+  # Primary command - natural language queries
+  - command: "/omni"
+    description: "Ask OMNI2 a question about your databases"
+    usage_hint: "/omni [your question]"
+    enabled: true
+    required_role: null  # Available to all users
+    examples:
+      - "/omni What's the health of transformer_master database?"
+      - "/omni Show me slow queries in the last 24 hours"
+      - "/omni Compare performance between yesterday and today"
+      - "/omni Analyze query: SELECT * FROM users WHERE id = 123"
+  
+  # Direct tool invocation (power users)
+  - command: "/omni-tool"
+    description: "Execute a specific MCP tool directly"
+    usage_hint: "/omni-tool [mcp_name] [tool_name] [params]"
+    enabled: true
+    required_role: "power_user"
+    examples:
+      - "/omni-tool oracle_mcp get_database_health"
+      - "/omni-tool oracle_mcp get_top_queries limit=10"
+  
+  # Check bot status
+  - command: "/omni-status"
+    description: "Check OMNI2 bot status and available MCPs"
+    usage_hint: "/omni-status"
+    enabled: true
+    required_role: null
+  
+  # View your audit logs
+  - command: "/omni-history"
+    description: "View your recent OMNI2 queries"
+    usage_hint: "/omni-history [limit]"
+    enabled: true
+    required_role: null
+  
+  # Help command
+  - command: "/omni-help"
+    description: "Get help using OMNI2"
+    usage_hint: "/omni-help [topic]"
+    enabled: true
+    required_role: null
+    topics:
+      - "commands"
+      - "permissions"
+      - "examples"
+  
+  # Admin commands
+  - command: "/omni-admin"
+    description: "Admin functions (promote user, view logs, etc.)"
+    usage_hint: "/omni-admin [action] [params]"
+    enabled: true
+    required_role: "admin"
+    subcommands:
+      - "promote-user <email> <role>"
+      - "demote-user <email>"
+      - "disable-user <email>"
+      - "enable-user <email>"
+      - "list-users"
+      - "view-logs <user_email>"
+      - "reload-config"
+
+# ============================================================
+# Bot Behavior
+# ============================================================
+behavior:
+  # Response style
+  response_style: "conversational"  # conversational, technical, minimal
+  
+  # Include emoji in responses
+  use_emoji: true
+  
+  # Show typing indicator while processing
+  show_typing: true
+  
+  # Acknowledge command immediately
+  immediate_ack: true
+  ack_message: "🤔 Thinking..."
+  
+  # Timeout for long-running queries
+  query_timeout_seconds: 30
+  timeout_message: "⏱️ Query is taking longer than expected. I'll post results when ready."
+  
+  # Retry logic
+  max_retries: 2
+  retry_delay_seconds: 5
+  
+  # Error handling
+  friendly_errors: true  # Convert technical errors to user-friendly messages
+  include_error_id: true  # Include error ID for support
+
+# ============================================================
+# Channels & Notifications
+# ============================================================
+channels:
+  # Where to send different types of messages
+  
+  # General notifications
+  notifications:
+    enabled: true
+    channel: "#omni2-notifications"
+    events:
+      - "mcp_down"
+      - "high_error_rate"
+      - "new_user_registered"
+  
+  # Admin alerts
+  admin_alerts:
+    enabled: true
+    channel: "#omni2-admin"
+    events:
+      - "suspicious_activity"
+      - "blocked_action_attempt"
+      - "config_reload"
+      - "user_promoted"
+  
+  # Error logs (for debugging)
+  error_logs:
+    enabled: true
+    channel: "#omni2-errors"
+    minimum_severity: "error"  # debug, info, warning, error, critical
+  
+  # Audit trail (compliance)
+  audit_trail:
+    enabled: false  # Too noisy for Slack, use database
+    channel: "#omni2-audit"
+
+# ============================================================
+# Allowed Channels
+# ============================================================
+# Define where OMNI2 can be used
+allowed_channels:
+  # Mode: whitelist, blacklist, or any
+  mode: "whitelist"
+  
+  # Whitelist: Bot only responds in these channels
+  whitelist:
+    - "#database"
+    - "#dev-ops"
+    - "#qa-testing"
+    - "#analytics"
+    # DMs are always allowed
+  
+  # Blacklist: Bot ignores these channels
+  blacklist:
+    - "#random"
+    - "#general"
+    - "#social"
+  
+  # Allow DMs
+  allow_direct_messages: true
+  
+  # Allow private channels
+  allow_private_channels: true
+
+# ============================================================
+# Message Formatting
+# ============================================================
+formatting:
+  # Use Slack blocks for rich formatting
+  use_blocks: true
+  
+  # Use threads for long responses
+  use_threads: true
+  thread_threshold_lines: 10  # Thread if response > 10 lines
+  
+  # Code formatting
+  code_block_style: "syntax_highlighted"  # syntax_highlighted or plain
+  
+  # Data tables
+  table_format: "slack_table"  # slack_table, csv, or markdown
+  max_table_rows: 20  # Truncate after N rows
+  
+  # Truncation
+  max_message_length: 3000  # Slack limit is ~4000
+  truncate_message: "... (truncated, see full output in thread)"
+
+# ============================================================
+# Response Templates
+# ============================================================
+templates:
+  # Welcome message (when user first interacts)
+  welcome:
+    enabled: true
+    message: |
+      👋 Hi there! I'm OMNI2, your intelligent database assistant.
+      
+      I can help you:
+      • Check database health and performance
+      • Analyze slow queries
+      • Compare metrics over time
+      • Run smoke tests
+      • And much more!
+      
+      Try `/omni What databases are available?` to get started.
+      
+      Your role: *{role}* | Rate limit: *{rate_limit}/hour*
+      Type `/omni-help` for more info.
+  
+  # Query success
+  query_success:
+    emoji: "✅"
+    format: |
+      {emoji} **Query completed in {duration}ms**
+      
+      {result}
+      
+      _Used: {mcp_name}.{tool_name}_
+  
+  # Query error
+  query_error:
+    emoji: "❌"
+    format: |
+      {emoji} **Oops! Something went wrong**
+      
+      {error_message}
+      
+      {helpful_hint}
+      
+      _Error ID: {error_id} | Support: <mailto:support@company.com>_
+  
+  # Permission denied
+  permission_denied:
+    emoji: "🚫"
+    format: |
+      {emoji} **Access Denied**
+      
+      You don't have permission to execute this action.
+      
+      • Your role: *{user_role}*
+      • Required role: *{required_role}*
+      • Tool blocked: `{tool_name}`
+      
+      Contact your admin if you need elevated access.
+  
+  # Rate limit exceeded
+  rate_limit:
+    emoji: "🐌"
+    format: |
+      {emoji} **Slow down!**
+      
+      You've hit your rate limit:
+      • Limit: *{rate_limit} requests/hour*
+      • Used: *{requests_used}*
+      • Reset in: *{reset_in_minutes} minutes*
+      
+      Upgrade your role for higher limits!
+  
+  # MCP unavailable
+  mcp_unavailable:
+    emoji: "⚠️"
+    format: |
+      {emoji} **Service Temporarily Unavailable**
+      
+      The *{mcp_name}* service is currently down or unreachable.
+      
+      I've notified the team. Try again in a few minutes.
+      
+      _Status: {mcp_status} | Last seen: {last_seen}_
+  
+  # Help message
+  help:
+    format: |
+      🤖 **OMNI2 Help**
+      
+      **Available Commands:**
+      {commands_list}
+      
+      **Your Permissions:**
+      • Role: *{user_role}*
+      • Allowed tools: *{allowed_tools_count}*
+      • Rate limit: *{rate_limit}/hour*
+      
+      **Examples:**
+      {examples_list}
+      
+      📚 Full docs: <https://github.com/aviciot/OmniV2/wiki>
+  
+  # Status message
+  status:
+    format: |
+      🟢 **OMNI2 Status**
+      
+      **MCPs Connected:**
+      {mcps_list}
+      
+      **Available Tools:** {total_tools}
+      **Active Users:** {active_users}
+      **Requests Today:** {requests_today}
+      
+      _Uptime: {uptime} | Version: {version}_
+
+# ============================================================
+# Interactive Features
+# ============================================================
+interactive:
+  # Use buttons for common actions
+  use_buttons: true
+  
+  # Button actions
+  buttons:
+    - label: "🔄 Refresh Data"
+      action: "refresh"
+      style: "primary"
+    
+    - label: "📊 View Details"
+      action: "view_details"
+      style: "default"
+    
+    - label: "❌ Cancel"
+      action: "cancel"
+      style: "danger"
+  
+  # Use select menus for choices
+  use_select_menus: true
+  
+  # Confirmation dialogs for dangerous actions
+  require_confirmation:
+    enabled: true
+    actions:
+      - "delete_*"
+      - "drop_*"
+      - "truncate_*"
+
+# ============================================================
+# Mentions & Triggers
+# ============================================================
+mentions:
+  # Respond to @mentions
+  respond_to_mentions: true
+  
+  # Respond to direct messages without command
+  respond_to_dm_without_command: true
+  dm_default_command: "/omni"
+  
+  # Bot name triggers (without @)
+  respond_to_name: true
+  name_triggers:
+    - "omni"
+    - "omni2"
+    - "hey omni"
+  
+  # Reaction triggers (react to message to query it)
+  reaction_triggers:
+    enabled: true
+    reactions:
+      - "eyes"        # 👀 = analyze this message
+      - "mag"         # 🔍 = search for this
+      - "chart"       # 📊 = visualize this
+
+# ============================================================
+# Security
+# ============================================================
+security:
+  # Verify Slack signatures
+  verify_signatures: true
+  
+  # Restrict to specific Slack workspace
+  workspace_restriction:
+    enabled: false
+    allowed_workspaces:
+      - "${SLACK_WORKSPACE_ID}"
+  
+  # Block bots from using OMNI2
+  block_bot_users: true
+  
+  # Rate limiting per user (additional to role-based)
+  slack_rate_limit:
+    enabled: true
+    requests_per_minute: 10
+    burst: 5
+  
+  # Require user to be in allowed_channels list
+  enforce_channel_restrictions: true
+
+# ============================================================
+# Logging & Debugging
+# ============================================================
+logging:
+  # Log all Slack interactions
+  log_all_messages: true
+  
+  # Include Slack metadata in logs
+  include_metadata: true
+  metadata_fields:
+    - "user_id"
+    - "channel_id"
+    - "channel_name"
+    - "team_id"
+    - "message_ts"
+  
+  # Debug mode (verbose logging)
+  debug: false
+  
+  # Log to file
+  log_file: "logs/slack_bot.log"
+  log_rotation: "daily"
+  log_retention_days: 30
+
+# ============================================================
+# Advanced Features (Phase 2)
+# ============================================================
+advanced:
+  # Scheduled messages
+  scheduled_messages:
+    enabled: false
+    schedules: []
+    # Example:
+    # - cron: "0 9 * * 1"  # Every Monday at 9am
+    #   channel: "#database"
+    #   message: "📊 Weekly database health report"
+    #   command: "/omni-tool oracle_mcp get_database_health"
+  
+  # Auto-responses
+  auto_responses:
+    enabled: false
+    patterns: []
+    # Example:
+    # - pattern: "is.*database.*down"
+    #   response: "Let me check the database health for you..."
+    #   command: "/omni get database health"
+  
+  # AI conversation mode
+  conversation_mode:
+    enabled: false  # Phase 2 feature
+    context_memory: 5  # Remember last N messages
+    clarification_questions: true
+  
+  # Workflow builder integration
+  workflow_integration:
+    enabled: false  # Phase 2 feature

@@ -1,0 +1,339 @@
+# ============================================================
+# OMNI2 User Management Configuration
+# ============================================================
+# Define users, roles, and permissions
+# Users can be identified by email or Slack user ID
+# ============================================================
+
+# Super admins (hardcoded, can't be demoted via API)
+super_admins:
+  - email: "avicoiot@gmail.com"
+    name: "Avi Cohen"
+    slack_user_id: null  # Will be populated when user first interacts
+    description: "System owner and primary administrator"
+
+# Predefined users (synced to database on startup)
+# Add your team members here
+users:
+  # Example users - replace with your actual team
+  
+  # DBAs - Database Administrators
+  - email: "dba@company.com"
+    name: "Database Admin"
+    role: "dba"
+    slack_user_id: null
+    teams: ["database", "infrastructure"]
+    allowed_databases: ["*"]  # All databases
+    
+  # Developers - Power Users
+  - email: "developer@company.com"
+    name: "Developer"
+    role: "power_user"
+    slack_user_id: null
+    teams: ["development", "backend"]
+    allowed_databases: ["transformer_master", "mysql_devdb03_avi"]
+  
+  # QA Team - Testing + Read
+  - email: "qa@company.com"
+    name: "QA Engineer"
+    role: "qa_tester"
+    slack_user_id: null
+    teams: ["qa", "testing"]
+    allowed_databases: ["mysql_devdb03_avi"]  # Test DB only
+  
+  # Analysts - Read Only
+  - email: "analyst@company.com"
+    name: "Business Analyst"
+    role: "read_only"
+    slack_user_id: null
+    teams: ["analytics", "business"]
+    allowed_databases: ["transformer_master"]
+
+# ============================================================
+# Role Definitions
+# ============================================================
+roles:
+  # System Administrator
+  admin:
+    display_name: "Administrator"
+    description: "Full system access, can manage users and configuration"
+    color: "#FF0000"  # Red - for UI display
+    
+    permissions:
+      can_bypass_tool_restrictions: true
+      can_manage_users: true
+      can_modify_config: true
+      can_view_audit_logs: true
+      can_execute_dangerous_tools: true
+      can_access_all_databases: true
+      can_promote_users: true
+      can_delete_data: false  # Even admins can't delete by default
+    
+    rate_limit:
+      requests_per_hour: 0  # Unlimited
+      concurrent_requests: 10
+  
+  # Database Administrator
+  dba:
+    display_name: "Database Administrator"
+    description: "Database management and performance tuning"
+    color: "#0066CC"  # Blue
+    
+    permissions:
+      can_bypass_tool_restrictions: false
+      can_manage_users: false
+      can_modify_config: false
+      can_view_audit_logs: true
+      can_execute_dangerous_tools: false
+      can_access_all_databases: true
+      can_promote_users: false
+      can_delete_data: false
+    
+    allowed_mcp_tools:
+      oracle_mcp:
+        - "*"  # All Oracle tools
+      mysql_mcp:
+        - "*"  # All MySQL tools (when added)
+    
+    denied_tools:
+      - "delete_*"
+      - "drop_*"
+      - "truncate_*"
+    
+    rate_limit:
+      requests_per_hour: 200
+      concurrent_requests: 5
+  
+  # Power User / Developer
+  power_user:
+    display_name: "Power User"
+    description: "Full read access, limited write operations"
+    color: "#00AA00"  # Green
+    
+    permissions:
+      can_bypass_tool_restrictions: false
+      can_manage_users: false
+      can_modify_config: false
+      can_view_audit_logs: false  # Can only see own logs
+      can_execute_dangerous_tools: false
+      can_access_all_databases: false
+      can_promote_users: false
+      can_delete_data: false
+    
+    allowed_tool_patterns:
+      - "get_*"
+      - "analyze_*"
+      - "compare_*"
+      - "list_*"
+      - "show_*"
+      - "explain_*"
+      - "describe_*"
+    
+    denied_tools:
+      - "delete_*"
+      - "drop_*"
+      - "truncate_*"
+      - "execute_*"
+      - "modify_*"
+    
+    rate_limit:
+      requests_per_hour: 100
+      concurrent_requests: 3
+  
+  # QA Tester
+  qa_tester:
+    display_name: "QA Tester"
+    description: "Can run tests and view database health"
+    color: "#FFA500"  # Orange
+    
+    permissions:
+      can_bypass_tool_restrictions: false
+      can_manage_users: false
+      can_modify_config: false
+      can_view_audit_logs: false
+      can_execute_dangerous_tools: false
+      can_access_all_databases: false
+      can_promote_users: false
+      can_delete_data: false
+    
+    allowed_mcp_tools:
+      smoketest_mcp:
+        - "run_smoke_test"
+        - "check_endpoint_health"
+        - "view_test_results"
+      oracle_mcp:
+        - "get_database_health"
+        - "get_top_queries"
+      mysql_mcp:
+        - "get_database_health"
+    
+    rate_limit:
+      requests_per_hour: 50
+      concurrent_requests: 2
+  
+  # Read Only / Analyst
+  read_only:
+    display_name: "Read Only"
+    description: "View-only access to monitoring and analysis"
+    color: "#808080"  # Gray
+    
+    permissions:
+      can_bypass_tool_restrictions: false
+      can_manage_users: false
+      can_modify_config: false
+      can_view_audit_logs: false
+      can_execute_dangerous_tools: false
+      can_access_all_databases: false
+      can_promote_users: false
+      can_delete_data: false
+    
+    allowed_tool_patterns:
+      - "get_*"
+      - "list_*"
+      - "show_*"
+      - "view_*"
+    
+    denied_tools:
+      - "analyze_*"  # Too resource intensive
+      - "compare_*"  # Too resource intensive
+      - "*_history"  # Potentially sensitive
+    
+    rate_limit:
+      requests_per_hour: 30
+      concurrent_requests: 1
+
+# ============================================================
+# Team Definitions
+# ============================================================
+# Teams for grouping users and notifications
+teams:
+  database:
+    name: "Database Team"
+    description: "Database administrators and engineers"
+    slack_channel: "#database-alerts"
+    notify_on_errors: true
+    
+  development:
+    name: "Development Team"
+    description: "Application developers"
+    slack_channel: "#dev-notifications"
+    notify_on_errors: false
+    
+  qa:
+    name: "QA Team"
+    description: "Quality assurance and testing"
+    slack_channel: "#qa-reports"
+    notify_on_errors: false
+    
+  analytics:
+    name: "Analytics Team"
+    description: "Business analysts and data scientists"
+    slack_channel: "#analytics"
+    notify_on_errors: false
+  
+  infrastructure:
+    name: "Infrastructure Team"
+    description: "DevOps and infrastructure engineers"
+    slack_channel: "#infra-ops"
+    notify_on_errors: true
+
+# ============================================================
+# Auto-Provisioning Rules
+# ============================================================
+auto_provisioning:
+  # Enable automatic user creation on first Slack interaction
+  enabled: true
+  
+  # New users from Slack get this default role
+  default_role: "read_only"
+  
+  # Require admin approval for new users
+  require_approval: false
+  
+  # Auto-assign role based on email domain
+  email_domain_mapping:
+    "@company.com":
+      default_role: "power_user"
+      require_approval: false
+    
+    "@contractor.com":
+      default_role: "read_only"
+      require_approval: true  # Admin must approve contractors
+    
+    "@partner.com":
+      default_role: "read_only"
+      require_approval: true
+  
+  # Auto-assign role based on Slack workspace team
+  slack_team_mapping:
+    database_team:
+      default_role: "dba"
+      require_approval: true
+    
+    engineering_team:
+      default_role: "power_user"
+      require_approval: false
+    
+    qa_team:
+      default_role: "qa_tester"
+      require_approval: false
+  
+  # Notify admins when new user is created
+  notify_admins: true
+  notification_channel: "#omni2-admin"
+
+# ============================================================
+# User Session Settings
+# ============================================================
+session:
+  # Session timeout after inactivity
+  timeout_minutes: 60
+  
+  # Max concurrent sessions per user
+  max_concurrent_sessions: 3
+  
+  # Remember me duration
+  remember_me_days: 7
+  
+  # Session storage (redis in Phase 2)
+  storage: "database"  # database or redis
+
+# ============================================================
+# User Restrictions
+# ============================================================
+restrictions:
+  # Block users after N failed attempts
+  max_failed_attempts: 5
+  lockout_duration_minutes: 30
+  
+  # Block users who trigger too many alerts
+  max_blocked_actions_per_hour: 10
+  auto_suspend_on_violations: true
+  
+  # IP whitelisting (future)
+  ip_whitelist_enabled: false
+  allowed_ips: []
+
+# ============================================================
+# Audit Settings (User-specific)
+# ============================================================
+user_audit:
+  # Track user activity
+  track_activity: true
+  
+  # Log user login/logout
+  log_authentication: true
+  
+  # Watch specific users (additional monitoring)
+  watch_users: []
+  # Example:
+  # - "newuser@example.com"
+  # - "contractor@partner.com"
+  
+  # Alert on suspicious behavior
+  alert_on_suspicious_activity: true
+  suspicious_patterns:
+    - "rapid_successive_requests"  # >10 requests in 10 seconds
+    - "after_hours_access"         # Access outside 9-5
+    - "blocked_tool_attempts"      # Multiple blocked actions
+    - "unusual_database_access"    # Access to unauthorized DB
