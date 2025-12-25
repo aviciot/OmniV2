@@ -43,10 +43,18 @@ mcps:
   # ------------------------------
   - name: oracle_mcp
     display_name: "Oracle Performance Analyzer"
-    url: http://oracle-mcp:8300
+    url: http://localhost:8001
     enabled: true
     timeout_seconds: 45
     description: "Oracle database performance monitoring and query analysis"
+    
+    # Authentication (if MCP requires API key)
+    authentication:
+      enabled: true
+      type: "bearer"  # bearer, basic, api_key
+      api_key: "${MCP_ORACLE_API_KEY}"  # From .env file
+      # For basic auth: username, password
+      # For custom header: header_name, header_value
     
     # Tags for easier filtering
     tags:
