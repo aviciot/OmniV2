@@ -33,7 +33,9 @@ class ChatResponse(BaseModel):
     answer: str
     tool_calls: int = 0
     tools_used: list = []
+    iterations: int = 1
     error: Optional[str] = None
+    warning: Optional[str] = None
 
 
 # ============================================================
@@ -93,6 +95,8 @@ async def ask_question(
             answer=result["answer"],
             tool_calls=result.get("tool_calls", 0),
             tools_used=result.get("tools_used", []),
+            iterations=result.get("iterations", 1),
+            warning=result.get("warning"),
         )
         
     except ValueError as e:

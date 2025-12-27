@@ -459,11 +459,28 @@ Successful response:
 {
   "success": true,
   "answer": "Here is the answer to your question...",
-  "tool_calls": 1,
-  "tools_used": ["github_mcp.search_repositories"],
-  "error": null
+  "tool_calls": 3,
+  "tools_used": ["database_mcp.list_available_databases", "database_mcp.get_database_health", "database_mcp.get_database_health"],
+  "iterations": 2,
+  "error": null,
+  "warning": null
 }
 ```
+
+**Response Fields:**
+- `success`: Whether the request completed successfully
+- `answer`: Natural language answer from Claude
+- `tool_calls`: Total number of MCP tools executed
+- `tools_used`: List of tools called (format: `mcp_name.tool_name`)
+- `iterations`: Number of agentic loop iterations (multi-step reasoning)
+- `error`: Error message if request failed
+- `warning`: Warning message (e.g., "max_iterations_reached")
+
+**Iterations Explained:**
+- `1`: Simple question, answered directly or single tool call
+- `2-3`: Multi-step reasoning (e.g., list databases → check health of each)
+- `4+`: Complex workflow with multiple dependencies
+- `10`: Maximum reached (safety limit)
 
 Error response:
 ```json
@@ -472,7 +489,9 @@ Error response:
   "answer": null,
   "tool_calls": 0,
   "tools_used": [],
-  "error": "Error message here"
+  "iterations": 0,
+  "error": "Error message here",
+  "warning": null
 }
 ```
 

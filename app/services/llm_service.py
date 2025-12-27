@@ -18,6 +18,9 @@ from app.utils.logger import logger
 class LLMService:
     """Service for LLM-powered MCP routing and question answering."""
     
+    # Maximum iterations for agentic loop (prevent infinite loops)
+    MAX_ITERATIONS = 10
+    
     def __init__(self):
         """Initialize LLM service with Anthropic client."""
         api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -31,6 +34,11 @@ class LLMService:
         self.max_tokens = int(os.getenv("ANTHROPIC_MAX_TOKENS", "4096"))
         self.mcp_client = get_mcp_client()
         self.user_service = get_user_service()
+        
+        # Enable prompt caching (Anthropic-specific feature)
+        # NOTE: Prompt caching is Anthropic-specific. When adding other LLM providers,
+        # make this conditional based on provider type.
+        self.use_prompt_caching = True
         
     async def build_system_prompt(self, user_id: str) -> str:
         """
@@ -159,7 +167,10 @@ When calling tools, use the exact tool name and provide all required arguments.
     
     async def ask(self, user_id: str, message: str) -> Dict[str, Any]:
         """
-        Process user question with LLM routing.
+        Process user question with LLM routing using agentic loop.
+        
+        Implements multi-step tool execution where Claude can call multiple tools
+        sequentially based on previous results.
         
         Args:
             user_id: User email address
@@ -169,156 +180,159 @@ When calling tools, use the exact tool name and provide all required arguments.
             Response dict with answer and metadata
         """
         logger.info(
-            "Processing LLM request",
+            "🤖 Starting LLM request",
             user=user_id,
-            message=message[:100],
+            message=message[:100] + "..." if len(message) > 100 else message,
         )
         
         # Build system prompt and tools
         system_prompt = await self.build_system_prompt(user_id)
         claude_tools = await self.build_tools_for_claude(user_id)
         
-        # Call Claude
-        try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                system=system_prompt,
-                tools=claude_tools if claude_tools else None,
-                messages=[
-                    {"role": "user", "content": message}
-                ],
-            )
-            
-            # Process response
-            result = await self._process_claude_response(response, user_id, message)
+        # Initialize conversation with system prompt
+        # Use prompt caching for Anthropic to save costs on repeated system prompts
+        system_messages = [{"role": "user", "content": message}]
+        
+        if self.use_prompt_caching:
+            # Anthropic prompt caching: mark system prompt as cacheable
+            # This saves ~90% on input tokens for iterations 2+ (cached for 5 min)
+            system_config = [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ]
+        else:
+            system_config = system_prompt
+        
+        # Track metadata
+        total_tool_calls = 0
+        all_tools_used = []
+        iteration_count = 0
+        
+        # Agentic loop: Keep calling Claude until it's done (no more tool calls)
+        while iteration_count < self.MAX_ITERATIONS:
+            iteration_count += 1
             
             logger.info(
-                "LLM request completed",
+                f"🔄 Loop iteration {iteration_count}",
                 user=user_id,
-                has_tool_calls=result.get("tool_calls", 0) > 0,
+                tools_so_far=len(all_tools_used),
             )
             
-            return result
-            
-        except Exception as e:
-            logger.error(
-                "LLM request failed",
-                user=user_id,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
-            raise
-    
-    async def _process_claude_response(
-        self, 
-        response: Message,
-        user_id: str,
-        original_message: str
-    ) -> Dict[str, Any]:
-        """
-        Process Claude's response, handling tool calls if needed.
-        
-        Args:
-            response: Claude response message
-            user_id: User email address
-            original_message: The original user question
-            
-        Returns:
-            Processed response dict
-        """
-        result = {
-            "answer": "",
-            "tool_calls": 0,
-            "tools_used": [],
-            "raw_response": None,
-        }
-        
-        # Check for tool use
-        tool_uses = [block for block in response.content if isinstance(block, ToolUseBlock)]
-        
-        if tool_uses:
-            # Execute tool calls
-            tool_results = []
-            
-            for tool_use in tool_uses:
-                tool_full_name = tool_use.name  # e.g., "github_mcp__search_repositories"
-                mcp_name, tool_name = tool_full_name.split("__", 1)
-                
-                logger.info(
-                    "Executing MCP tool",
-                    user=user_id,
-                    mcp=mcp_name,
-                    tool=tool_name,
+            try:
+                # Call Claude
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=self.max_tokens,
+                    system=system_config,
+                    tools=claude_tools if claude_tools else None,
+                    messages=system_messages,
                 )
                 
-                try:
-                    # Call the actual MCP tool
-                    tool_result = await self.mcp_client.call_tool(
-                        server_name=mcp_name,
-                        tool_name=tool_name,
-                        arguments=tool_use.input,
-                    )
+                # Check for tool use
+                tool_uses = [block for block in response.content if isinstance(block, ToolUseBlock)]
+                
+                if not tool_uses:
+                    # No more tool calls - Claude is done, extract final answer
+                    text_blocks = [block for block in response.content if isinstance(block, TextBlock)]
+                    final_answer = "\n".join(block.text for block in text_blocks)
                     
-                    tool_results.append({
-                        "mcp": mcp_name,
-                        "tool": tool_name,
-                        "success": True,
-                        "result": tool_result,
-                    })
-                    
-                    result["tools_used"].append(f"{mcp_name}.{tool_name}")
-                    
-                except Exception as e:
-                    logger.error(
-                        "Tool execution failed",
+                    logger.info(
+                        f"✅ LLM request completed",
                         user=user_id,
-                        mcp=mcp_name,
-                        tool=tool_name,
-                        error=str(e),
+                        iterations=iteration_count,
+                        total_tools=total_tool_calls,
+                        tools_used=all_tools_used,
                     )
-                    tool_results.append({
-                        "mcp": mcp_name,
-                        "tool": tool_name,
-                        "success": False,
-                        "error": str(e),
-                    })
-            
-            result["tool_calls"] = len(tool_uses)
-            result["tool_results"] = tool_results
-            
-            # Send tool results back to Claude for final answer
-            final_response = self.client.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                messages=[
-                    {"role": "user", "content": original_message},
-                    {"role": "assistant", "content": response.content},
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool_use.id,
-                                "content": str(tool_res.get("result", tool_res.get("error")))
-                            }
-                            for tool_use, tool_res in zip(tool_uses, tool_results)
-                        ]
+                    
+                    return {
+                        "answer": final_answer,
+                        "tool_calls": total_tool_calls,
+                        "tools_used": all_tools_used,
+                        "iterations": iteration_count,
                     }
-                ],
-            )
-            
-            # Extract final text answer
-            text_blocks = [block for block in final_response.content if isinstance(block, TextBlock)]
-            result["answer"] = "\n".join(block.text for block in text_blocks)
-            
-        else:
-            # No tool calls - direct answer
-            text_blocks = [block for block in response.content if isinstance(block, TextBlock)]
-            result["answer"] = "\n".join(block.text for block in text_blocks)
+                
+                # Execute tools
+                logger.info(
+                    f"🔧 Executing {len(tool_uses)} tool(s)",
+                    user=user_id,
+                    tools=[t.name for t in tool_uses],
+                )
+                
+                tool_results = []
+                for tool_use in tool_uses:
+                    tool_full_name = tool_use.name  # e.g., "github_mcp__search_repositories"
+                    mcp_name, tool_name = tool_full_name.split("__", 1)
+                    
+                    try:
+                        # Call the actual MCP tool
+                        tool_result = await self.mcp_client.call_tool(
+                            server_name=mcp_name,
+                            tool_name=tool_name,
+                            arguments=tool_use.input,
+                        )
+                        
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use.id,
+                            "content": str(tool_result),
+                        })
+                        
+                        all_tools_used.append(f"{mcp_name}.{tool_name}")
+                        total_tool_calls += 1
+                        
+                        logger.info(
+                            f"✓ Tool executed successfully",
+                            mcp=mcp_name,
+                            tool=tool_name,
+                        )
+                        
+                    except Exception as e:
+                        logger.error(
+                            f"✗ Tool execution failed",
+                            mcp=mcp_name,
+                            tool=tool_name,
+                            error=str(e),
+                        )
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use.id,
+                            "content": f"Error: {str(e)}",
+                            "is_error": True,
+                        })
+                
+                # Add assistant response and tool results to conversation
+                system_messages.append({"role": "assistant", "content": response.content})
+                system_messages.append({"role": "user", "content": tool_results})
+                
+                # Loop back to let Claude continue with tool results
+                
+            except Exception as e:
+                logger.error(
+                    "❌ LLM request failed",
+                    user=user_id,
+                    iteration=iteration_count,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+                raise
         
-        return result
-
+        # Max iterations reached
+        logger.warning(
+            f"⚠️ Max iterations reached ({self.MAX_ITERATIONS})",
+            user=user_id,
+            total_tools=total_tool_calls,
+        )
+        
+        return {
+            "answer": f"Maximum iteration limit ({self.MAX_ITERATIONS}) reached. Partial results returned.",
+            "tool_calls": total_tool_calls,
+            "tools_used": all_tools_used,
+            "iterations": iteration_count,
+            "warning": "max_iterations_reached",
+        }
 
 # Global LLM service instance
 _llm_service: Optional[LLMService] = None
