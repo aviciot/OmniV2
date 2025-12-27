@@ -101,8 +101,9 @@ services:
     ports:
       - "5433:5432"  # Use 5433 on host to avoid conflict with existing PostgreSQL
     volumes:
-      # Mount init script
-      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+      # Mount init scripts (auto-run on first start)
+      - ./migrations/init.sql:/docker-entrypoint-initdb.d/001_init.sql
+      - ./migrations/seed.sql:/docker-entrypoint-initdb.d/002_seed.sql
       # Persist data
       - postgres-data:/var/lib/postgresql/data
     networks:

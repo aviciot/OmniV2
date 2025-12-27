@@ -60,33 +60,16 @@ CREATE INDEX idx_user_teams_team_name ON user_teams(team_name);
 CREATE UNIQUE INDEX idx_user_teams_unique ON user_teams(user_id, team_name);
 
 -- ============================================================
--- Audit Logs Table (ENHANCED)
+-- Audit Logs Table
 -- ============================================================
 -- Stores all user interactions and tool invocations
--- Includes agentic loop tracking, cost estimation, and analytics
 CREATE TABLE IF NOT EXISTS audit_logs (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     
-    -- Request details (legacy + new)
+    -- Request details
     timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    question TEXT,  -- Made nullable for backward compatibility
-    request_type VARCHAR(50) DEFAULT 'chat',
-    message TEXT,
-    message_preview VARCHAR(200),
-    
-    -- Agentic loop tracking (NEW)
-    iterations INTEGER DEFAULT 1,
-    tool_calls_count INTEGER DEFAULT 0,
-    tools_used TEXT[],
-    mcps_accessed TEXT[],
-    databases_accessed TEXT[],
-    
-    -- Token tracking and cost estimation (NEW)
-    tokens_input INTEGER,
-    tokens_output INTEGER,
-    tokens_cached INTEGER,
-    cost_estimate DECIMAL(10, 6),
+    question TEXT NOT NULL,
     
     -- Routing & execution
     mcp_target VARCHAR(255),
@@ -95,11 +78,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     
     -- Response details
     success BOOLEAN NOT NULL,
-    status VARCHAR(50) DEFAULT 'success',
-    warning VARCHAR(255),
     duration_ms INTEGER,
     result_summary TEXT,
-    response_preview TEXT,
     error_message TEXT,
     error_id VARCHAR(50),
     
@@ -120,30 +100,18 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     was_blocked BOOLEAN DEFAULT false,
     block_reason TEXT,
     
-    -- Timestamps
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
-    -- Full-text search
+    -- Indexes for search
     search_vector tsvector
 );
 
 -- Indexes for audit_logs table
 CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX idx_audit_logs_timestamp ON audit_logs(timestamp DESC);
-CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at DESC);
 CREATE INDEX idx_audit_logs_mcp_target ON audit_logs(mcp_target);
 CREATE INDEX idx_audit_logs_tool_called ON audit_logs(tool_called);
 CREATE INDEX idx_audit_logs_success ON audit_logs(success);
 CREATE INDEX idx_audit_logs_slack_user_id ON audit_logs(slack_user_id);
 CREATE INDEX idx_audit_logs_was_blocked ON audit_logs(was_blocked);
-
--- NEW: Indexes for enhanced columns
-CREATE INDEX idx_audit_logs_request_type ON audit_logs(request_type);
-CREATE INDEX idx_audit_logs_iterations ON audit_logs(iterations);
-CREATE INDEX idx_audit_logs_status ON audit_logs(status);
-CREATE INDEX idx_audit_logs_cost_estimate ON audit_logs(cost_estimate);
-CREATE INDEX idx_audit_logs_mcps_accessed ON audit_logs USING GIN(mcps_accessed);
-CREATE INDEX idx_audit_logs_tools_used ON audit_logs USING GIN(tools_used);
 
 -- Full-text search index
 CREATE INDEX idx_audit_logs_search ON audit_logs USING GIN(search_vector);
@@ -153,7 +121,6 @@ CREATE OR REPLACE FUNCTION audit_logs_search_trigger() RETURNS trigger AS $$
 BEGIN
     NEW.search_vector := to_tsvector('english', 
         COALESCE(NEW.question, '') || ' ' || 
-        COALESCE(NEW.message, '') || ' ' ||
         COALESCE(NEW.tool_called, '') || ' ' ||
         COALESCE(NEW.result_summary, '')
     );
@@ -166,20 +133,7 @@ CREATE TRIGGER audit_logs_search_update
     FOR EACH ROW EXECUTE FUNCTION audit_logs_search_trigger();
 
 -- Comments
-COMMENT ON TABLE audit_logs IS 'Complete audit trail of all OMNI2 interactions with agentic loop tracking';
-COMMENT ON COLUMN audit_logs.message IS 'Full user message/question';
-COMMENT ON COLUMN audit_logs.message_preview IS 'Truncated message for listings (first 200 chars)';
-COMMENT ON COLUMN audit_logs.iterations IS 'Number of agentic loop iterations';
-COMMENT ON COLUMN audit_logs.tool_calls_count IS 'Total number of MCP tool calls';
-COMMENT ON COLUMN audit_logs.tools_used IS 'Array of tool names called (format: mcp_name.tool_name)';
-COMMENT ON COLUMN audit_logs.mcps_accessed IS 'Array of MCP server names accessed';
-COMMENT ON COLUMN audit_logs.databases_accessed IS 'Array of database names accessed';
-COMMENT ON COLUMN audit_logs.tokens_input IS 'Claude input tokens (not including cached)';
-COMMENT ON COLUMN audit_logs.tokens_output IS 'Claude output tokens';
-COMMENT ON COLUMN audit_logs.tokens_cached IS 'Claude cached input tokens (90% discount)';
-COMMENT ON COLUMN audit_logs.cost_estimate IS 'Estimated cost in USD for this request';
-COMMENT ON COLUMN audit_logs.status IS 'Request status: success, error, warning';
-COMMENT ON COLUMN audit_logs.warning IS 'Warning message if any (e.g., max_iterations_reached)';
+COMMENT ON TABLE audit_logs IS 'Complete audit trail of all OMNI2 interactions';
 COMMENT ON COLUMN audit_logs.llm_confidence IS 'LLM routing confidence score (0.0 to 1.0)';
 COMMENT ON COLUMN audit_logs.was_blocked IS 'Whether action was blocked by policy';
 
@@ -393,37 +347,25 @@ CREATE TRIGGER update_mcp_servers_updated_at
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================================
--- Schema Version Tracking
+-- Initial Data
 -- ============================================================
-CREATE TABLE IF NOT EXISTS schema_version (
-    version INTEGER PRIMARY KEY,
-    description TEXT,
-    applied_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-);
 
-INSERT INTO schema_version (version, description) 
-VALUES (1, 'Consolidated schema (001 + 002): Base tables + Agentic loop enhancements')
-ON CONFLICT (version) DO NOTHING;
+-- Insert super admin user
+INSERT INTO users (email, name, role, is_super_admin, is_active)
+VALUES ('avicoiot@gmail.com', 'Avi Cohen', 'admin', true, true)
+ON CONFLICT (email) DO NOTHING;
 
--- NEW: Audit logs summary view (with agentic loop metrics)
-CREATE OR REPLACE VIEW audit_logs_summary AS
-SELECT 
-    DATE_TRUNC('day', created_at) as date,
-    user_id,
-    request_type,
-    COUNT(*) as total_requests,
-    SUM(tool_calls_count) as total_tool_calls,
-    AVG(iterations) as avg_iterations,
-    AVG(duration_ms) as avg_duration_ms,
-    SUM(tokens_input) as total_tokens_input,
-    SUM(tokens_output) as total_tokens_output,
-    SUM(tokens_cached) as total_tokens_cached,
-    SUM(cost_estimate) as total_cost,
-    COUNT(*) FILTER (WHERE status = 'error') as error_count,
-    COUNT(*) FILTER (WHERE status = 'success') as success_count
-FROM audit_logs
-WHERE created_at IS NOT NULL
-GROUP BY DATE_TRUNC('day', created_at), user_id, request_type;
+-- Insert initial MCP servers (from config)
+INSERT INTO mcp_servers (name, url, is_enabled)
+VALUES 
+    ('oracle_mcp', 'http://localhost:8001', true),
+    ('smoketest_mcp', 'http://localhost:8002', false),
+    ('etl_mcp', 'http://localhost:8003', false)
+ON CONFLICT (name) DO NOTHING;
+
+-- ============================================================
+-- Views for Analytics
+-- ============================================================
 
 -- User activity summary
 CREATE OR REPLACE VIEW v_user_activity AS
@@ -512,30 +454,21 @@ ORDER BY mt.call_count DESC;
 -- ============================================================
 -- Completion
 -- ============================================================
+-- Schema version tracking
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    description TEXT,
+    applied_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO schema_version (version, description) 
+VALUES (1, 'Initial OMNI2 schema - Phase 1');
+
+-- Log migration completion
 DO $$
 BEGIN
-    RAISE NOTICE '========================================';
-    RAISE NOTICE 'OMNI2 Database Initialized Successfully!';
-    RAISE NOTICE '========================================';
-    RAISE NOTICE 'Database: omni';
-    RAISE NOTICE 'Schema Version: 1 (Consolidated)';
-    RAISE NOTICE '';
-    RAISE NOTICE 'Tables Created:';
-    RAISE NOTICE '  - users (with roles and authentication)';
-    RAISE NOTICE '  - user_teams (many-to-many)';
-    RAISE NOTICE '  - audit_logs (ENHANCED with agentic loop tracking)';
-    RAISE NOTICE '  - mcp_servers (MCP registry)';
-    RAISE NOTICE '  - mcp_tools (tool cache)';
-    RAISE NOTICE '  - sessions (stateful conversations)';
-    RAISE NOTICE '  - notifications (user notifications)';
-    RAISE NOTICE '  - api_keys (external integrations)';
-    RAISE NOTICE '';
-    RAISE NOTICE 'Views Created:';
-    RAISE NOTICE '  - audit_logs_summary (agentic loop metrics)';
-    RAISE NOTICE '  - v_user_activity';
-    RAISE NOTICE '  - v_mcp_health';
-    RAISE NOTICE '  - v_tool_usage';
-    RAISE NOTICE '';
-    RAISE NOTICE 'Ready for seed data (002_seed.sql)';
-    RAISE NOTICE '========================================';
+    RAISE NOTICE 'OMNI2 database schema initialized successfully!';
+    RAISE NOTICE 'Database: omni (PS_db)';
+    RAISE NOTICE 'Tables created: users, user_teams, audit_logs, mcp_servers, mcp_tools, sessions, notifications, api_keys';
+    RAISE NOTICE 'Views created: v_user_activity, v_mcp_health, v_tool_usage';
 END $$;
