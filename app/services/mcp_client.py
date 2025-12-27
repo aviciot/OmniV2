@@ -1,20 +1,25 @@
 """
 MCP Client Service
 
-Handles communication with MCP servers using FastMCP client.
-Manages tool discovery, authentication, and execution.
+Handles communication with MCP servers using multiple protocols:
+- HTTP: FastMCP servers with HTTP transport
+- Stdio: Local MCP servers via subprocess
+- SSE: FastMCP servers with SSE transport
 """
 
-from typing import Dict, List, Optional, Any
-import httpx
+from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
+import asyncio
+import fnmatch
+from fastmcp import Client
+from fastmcp.client.transports import StdioTransport
 
 from app.config import settings
 from app.utils.logger import logger
 
 
 class MCPClient:
-    """Client for communicating with FastMCP servers via SSE."""
+    """Multi-protocol MCP client supporting HTTP, Stdio, and SSE transports."""
     
     def __init__(self):
         """Initialize MCP client with configured servers."""
@@ -23,42 +28,249 @@ class MCPClient:
             server.name: server.model_dump()
             for server in settings.mcps.mcps
         }
-        self.timeout = httpx.Timeout(30.0, connect=5.0)
-        self._client_cache: Dict[str, Any] = {}
+        self._client_cache: Dict[str, Client] = {}
         
-    def _get_auth_headers(self, server_config: Dict) -> Dict[str, str]:
+    async def _get_client(self, server_name: str) -> Client:
         """
-        Build authentication headers for MCP server.
+        Get or create a FastMCP client for a server with appropriate protocol.
+        
+        Supports:
+        - HTTP: URL-based connection (http://...)
+        - Stdio: Subprocess-based connection (command + args)
+        - SSE: Server-Sent Events (http://... with SSE transport)
         
         Args:
-            server_config: Server configuration dict
+            server_name: Name of the MCP server
             
         Returns:
-            Dict of HTTP headers
+            FastMCP Client instance
         """
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "OMNI2-Bridge/0.1.0",
-        }
+        if server_name in self._client_cache:
+            return self._client_cache[server_name]
         
-        # Add authentication if configured
-        auth_config = server_config.get("authentication", {})
-        if auth_config.get("enabled", False):
-            auth_type = auth_config.get("type", "bearer")
-            api_key = auth_config.get("api_key", "")
+        server_config = self.servers.get(server_name)
+        if not server_config:
+            raise ValueError(f"Unknown MCP server: {server_name}")
+        
+        protocol = server_config.get("protocol", "http").lower()
+        
+        logger.info(
+            "🔌 Creating MCP client",
+            server=server_name,
+            protocol=protocol,
+        )
+        
+        try:
+            client = None
             
-            if auth_type.lower() == "bearer" and api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            elif auth_type.lower() == "api_key" and api_key:
-                headers["X-API-Key"] = api_key
+            if protocol == "stdio":
+                # Stdio protocol - run as subprocess
+                client = await self._create_stdio_client(server_name, server_config)
+                
+            elif protocol in ("http", "sse"):
+                # HTTP/SSE protocol - URL-based
+                client = await self._create_http_client(server_name, server_config)
+                
+            else:
+                raise ValueError(f"Unsupported protocol: {protocol}")
+            
+            self._client_cache[server_name] = client
+            
+            logger.info(
+                "✅ MCP client connected",
+                server=server_name,
+                protocol=protocol,
+            )
+            
+            return client
+            
+        except Exception as e:
+            logger.error(
+                "❌ Failed to create MCP client",
+                server=server_name,
+                protocol=protocol,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            raise
+    
+    async def _create_http_client(
+        self, 
+        server_name: str, 
+        config: Dict[str, Any]
+    ) -> Client:
+        """
+        Create HTTP or SSE client.
         
-        return headers
+        Args:
+            server_name: Name of the server
+            config: Server configuration
+            
+        Returns:
+            FastMCP Client with HTTP/SSE transport
+        """
+        url = config.get("url", "")
+        if not url:
+            raise ValueError(f"No URL configured for server: {server_name}")
+
+        # Ensure URL ends with /mcp
+        if not url.rstrip("/").endswith("/mcp"):
+            url = url.rstrip("/") + "/mcp"
+
+        # Build authentication
+        auth = None
+        auth_config = config.get("authentication", {})
+        if auth_config.get("enabled", False):
+            api_key = auth_config.get("api_key", "")
+            if api_key:
+                # Use httpx.Auth class for Bearer token
+                import httpx
+                class BearerAuth(httpx.Auth):
+                    def __init__(self, token: str):
+                        self.token = token
+                    def auth_flow(self, request):
+                        request.headers["Authorization"] = f"Bearer {self.token}"
+                        yield request
+                auth = BearerAuth(api_key)
+
+        # Create client
+        client = Client(
+            transport=url,
+            auth=auth,
+            timeout=config.get("timeout_seconds", 30),
+        )
+
+        # Initialize connection
+        await client.__aenter__()
+
+        return client
+    
+    async def _create_stdio_client(
+        self, 
+        server_name: str, 
+        config: Dict[str, Any]
+    ) -> Client:
+        """
+        Create stdio client for subprocess-based MCP servers.
+        
+        Args:
+            server_name: Name of the server
+            config: Server configuration with command and args
+            
+        Returns:
+            FastMCP Client with Stdio transport
+        """
+        command = config.get("command")
+        args = config.get("args", [])
+        cwd = config.get("cwd")
+        
+        if not command:
+            raise ValueError(f"No command configured for stdio server: {server_name}")
+        
+        logger.info(
+            "📟 Starting stdio MCP subprocess",
+            server=server_name,
+            command=command,
+            args=args,
+        )
+        
+        # Create stdio transport
+        transport = StdioTransport(
+            command=command,
+            args=args,
+            env=None,  # Use current environment
+        )
+        
+        # Create client with stdio transport
+        client = Client(
+            transport=transport,
+            timeout=config.get("timeout_seconds", 30),
+        )
+        
+        # Initialize connection
+        await client.__aenter__()
+        
+        return client
+        
+    def _filter_tools_by_policy(
+        self, 
+        tools: List[Dict[str, Any]], 
+        server_name: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Filter tools based on server's tool policy.
+        
+        Args:
+            tools: List of tool dicts
+            server_name: Name of the server
+            
+        Returns:
+            Filtered list of tools
+        """
+        server_config = self.servers.get(server_name, {})
+        tool_policy = server_config.get("tool_policy", {})
+        
+        if not tool_policy:
+            return tools
+        
+        mode = tool_policy.get("mode", "allow_all")
+        
+        if mode == "allow_all":
+            # No filtering
+            return tools
+            
+        elif mode == "allow_only":
+            # Only allow specified tools
+            allowed = tool_policy.get("allow", [])
+            filtered_tools = []
+            
+            for tool in tools:
+                tool_name = tool.get("name", "")
+                # Check exact match or pattern match
+                if any(
+                    tool_name == pattern or fnmatch.fnmatch(tool_name, pattern)
+                    for pattern in allowed
+                ):
+                    filtered_tools.append(tool)
+            
+            logger.info(
+                f"🔒 Filtered tools (allow_only)",
+                server=server_name,
+                original_count=len(tools),
+                filtered_count=len(filtered_tools),
+                allowed_patterns=allowed,
+            )
+            return filtered_tools
+            
+        elif mode == "allow_all_except":
+            # Allow all except excluded tools
+            excluded = tool_policy.get("exclude", [])
+            filtered_tools = []
+            
+            for tool in tools:
+                tool_name = tool.get("name", "")
+                # Check if tool matches any exclude pattern
+                is_excluded = any(
+                    tool_name == pattern or fnmatch.fnmatch(tool_name, pattern)
+                    for pattern in excluded
+                )
+                if not is_excluded:
+                    filtered_tools.append(tool)
+            
+            logger.info(
+                f"🔒 Filtered tools (allow_all_except)",
+                server=server_name,
+                original_count=len(tools),
+                filtered_count=len(filtered_tools),
+                excluded_patterns=excluded,
+            )
+            return filtered_tools
+        
+        return tools
         
     async def list_tools(self, server_name: Optional[str] = None) -> Dict[str, Any]:
         """
-        List available tools from one or all MCP servers.
-        
-        FastMCP servers expose tools via POST /sse with tools/list method.
+        List available tools from one or all MCP servers using native MCP protocol.
         
         Args:
             server_name: Specific server to query, or None for all servers
@@ -72,7 +284,7 @@ class MCPClient:
             if not server_config:
                 raise ValueError(f"Unknown MCP server: {server_name}")
             
-            tools = await self._fetch_tools_rpc(server_name, server_config)
+            tools = await self._fetch_tools_native(server_name)
             return {
                 "servers": {server_name: tools},
                 "total_tools": len(tools.get("tools", [])),
@@ -88,7 +300,7 @@ class MCPClient:
                 continue
                 
             try:
-                tools = await self._fetch_tools_rpc(name, config)
+                tools = await self._fetch_tools_native(name)
                 all_tools[name] = tools
                 total_count += len(tools.get("tools", []))
             except Exception as e:
@@ -108,94 +320,72 @@ class MCPClient:
             "timestamp": datetime.utcnow().isoformat(),
         }
     
-    async def _fetch_tools_rpc(self, server_name: str, config: Dict) -> Dict[str, Any]:
+    async def _fetch_tools_native(self, server_name: str) -> Dict[str, Any]:
         """
-        Fetch tools from FastMCP server using JSON-RPC over HTTP.
-        
-        FastMCP exposes: POST /sse with {"method": "tools/list"}
+        Fetch tools from FastMCP server using native MCP protocol.
         
         Args:
             server_name: Name of the MCP server
-            config: Server configuration dict
             
         Returns:
             Dict with tools and server info
         """
-        url = config.get("url", "")
-        if not url:
-            raise ValueError(f"No URL configured for server: {server_name}")
-        
-        headers = self._get_auth_headers(config)
-        
-        # FastMCP uses JSON-RPC 2.0 format
-        rpc_endpoint = f"{url.rstrip('/')}/sse"
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/list",
-            "params": {}
-        }
-        
         logger.info(
             "🔍 Fetching tools from FastMCP server",
             server=server_name,
-            url=rpc_endpoint,
         )
         
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                response = await client.post(rpc_endpoint, json=payload, headers=headers)
-                response.raise_for_status()
-                
-                data = response.json()
-                
-                # Extract tools from JSON-RPC response
-                if "result" in data:
-                    tools_data = data["result"]
-                    tools = tools_data.get("tools", [])
-                    
-                    logger.info(
-                        "✅ Successfully fetched tools",
-                        server=server_name,
-                        tool_count=len(tools),
-                    )
-                    
-                    return {
-                        "tools": tools,
-                        "server_info": tools_data.get("serverInfo", {}),
-                        "status": "healthy",
-                        "last_check": datetime.utcnow().isoformat(),
-                    }
-                elif "error" in data:
-                    error_msg = data["error"].get("message", "Unknown error")
-                    raise Exception(f"RPC error: {error_msg}")
-                else:
-                    raise Exception("Invalid RPC response format")
-                
-            except httpx.HTTPStatusError as e:
-                logger.error(
-                    "❌ HTTP error fetching tools",
-                    server=server_name,
-                    status_code=e.response.status_code,
-                    error=str(e),
-                )
-                raise
-                
-            except httpx.TimeoutException:
-                logger.error(
-                    "⏱️  Timeout fetching tools",
-                    server=server_name,
-                )
-                raise
-                
-            except Exception as e:
-                logger.error(
-                    "❌ Unexpected error fetching tools",
-                    server=server_name,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-                raise
+        try:
+            client = await self._get_client(server_name)
+            
+            # Use native FastMCP list_tools method
+            tools_result = await client.list_tools()
+            
+            # tools_result is either a list of tools or an object with .tools attribute
+            if isinstance(tools_result, list):
+                tools_list = tools_result
+            elif hasattr(tools_result, 'tools'):
+                tools_list = tools_result.tools
+            else:
+                tools_list = []
+            
+            # Convert to our format
+            tools = [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "inputSchema": tool.inputSchema.model_dump() if hasattr(tool.inputSchema, 'model_dump') else tool.inputSchema,
+                }
+                for tool in tools_list
+            ]
+            
+            # Apply tool policy filtering
+            filtered_tools = self._filter_tools_by_policy(tools, server_name)
+            
+            logger.info(
+                "✅ Successfully fetched tools",
+                server=server_name,
+                tool_count=len(filtered_tools),
+            )
+            
+            return {
+                "tools": filtered_tools,
+                "server_info": {
+                    "name": server_name,
+                    "protocol": "mcp",
+                },
+                "status": "healthy",
+                "last_check": datetime.utcnow().isoformat(),
+            }
+            
+        except Exception as e:
+            logger.error(
+                "❌ Error fetching tools",
+                server=server_name,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            raise
     
     async def call_tool(
         self,
@@ -204,107 +394,64 @@ class MCPClient:
         arguments: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Execute a tool on a FastMCP server.
-        
-        Uses JSON-RPC: POST /sse with {"method": "tools/call"}
+        Execute a tool on an MCP server using native MCP protocol.
         
         Args:
             server_name: Name of the MCP server
-            tool_name: Name of the tool to execute
+            tool_name: Name of the tool to call
             arguments: Tool arguments
             
         Returns:
-            Tool execution result
+            Dict with tool execution result
         """
         server_config = self.servers.get(server_name)
         if not server_config:
             raise ValueError(f"Unknown MCP server: {server_name}")
         
-        url = server_config.get("url", "")
-        if not url:
-            raise ValueError(f"No URL configured for server: {server_name}")
-        
-        headers = self._get_auth_headers(server_config)
-        
-        # FastMCP uses JSON-RPC 2.0 format
-        rpc_endpoint = f"{url.rstrip('/')}/sse"
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": arguments,
-            }
-        }
+        protocol = server_config.get("protocol", "http")
         
         logger.info(
-            "🔧 Calling FastMCP tool",
+            "�️  Calling tool on MCP server",
             server=server_name,
             tool=tool_name,
-            url=rpc_endpoint,
+            protocol=protocol,
+            arguments=arguments,
         )
         
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                response = await client.post(
-                    rpc_endpoint,
-                    json=payload,
-                    headers=headers,
-                )
-                response.raise_for_status()
-                
-                data = response.json()
-                
-                # Extract result from JSON-RPC response
-                if "result" in data:
-                    result = data["result"]
-                    
-                    logger.info(
-                        "✅ Tool executed successfully",
-                        server=server_name,
-                        tool=tool_name,
-                        has_content=bool(result.get("content")),
-                    )
-                    
-                    return result
-                elif "error" in data:
-                    error_msg = data["error"].get("message", "Unknown error")
-                    raise Exception(f"RPC error: {error_msg}")
-                else:
-                    raise Exception("Invalid RPC response format")
-                
-            except httpx.HTTPStatusError as e:
-                logger.error(
-                    "❌ HTTP error calling tool",
-                    server=server_name,
-                    tool=tool_name,
-                    status_code=e.response.status_code,
-                    error=str(e),
-                )
-                raise
-                
-            except httpx.TimeoutException:
-                logger.error(
-                    "⏱️  Timeout calling tool",
-                    server=server_name,
-                    tool=tool_name,
-                )
-                raise
-                
-            except Exception as e:
-                logger.error(
-                    "❌ Unexpected error calling tool",
-                    server=server_name,
-                    tool=tool_name,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-                raise
+        try:
+            client = await self._get_client(server_name)
+            
+            # Use native FastMCP call_tool method
+            result = await client.call_tool(tool_name, arguments)
+            
+            logger.info(
+                "✅ Tool execution successful",
+                server=server_name,
+                tool=tool_name,
+            )
+            
+            return {
+                "result": result.content if hasattr(result, 'content') else result,
+                "status": "success",
+                "server": server_name,
+                "tool": tool_name,
+                "protocol": protocol,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            
+        except Exception as e:
+            logger.error(
+                "❌ Tool execution failed",
+                server=server_name,
+                tool=tool_name,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            raise
     
     async def health_check(self, server_name: str) -> Dict[str, Any]:
         """
-        Check health of an MCP server.
+        Check health of an MCP server by attempting to list tools.
         
         Args:
             server_name: Name of the MCP server
@@ -319,49 +466,57 @@ class MCPClient:
                 "error": f"Unknown server: {server_name}",
             }
         
-        url = server_config.get("url", "")
-        if not url:
+        protocol = server_config.get("protocol", "http")
+        
+        logger.info(
+            "🏥 Health check for MCP server",
+            server=server_name,
+            protocol=protocol,
+        )
+        
+        try:
+            # Try to list tools as a health check
+            client = await self._get_client(server_name)
+            tools_result = await client.list_tools()
+            
+            tool_count = len(tools_result.tools) if hasattr(tools_result, 'tools') else 0
+            
+            return {
+                "healthy": True,
+                "protocol": protocol,
+                "tool_count": tool_count,
+                "last_check": datetime.utcnow().isoformat(),
+            }
+            
+        except Exception as e:
+            logger.error(
+                "❌ Health check failed",
+                server=server_name,
+                error=str(e),
+            )
             return {
                 "healthy": False,
-                "error": "No URL configured",
+                "protocol": protocol,
+                "error": str(e),
+                "last_check": datetime.utcnow().isoformat(),
             }
+    
+    async def close(self):
+        """Close all client connections."""
+        logger.info("🔌 Closing MCP client connections")
         
-        # Build headers with authentication
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "OMNI2-Bridge/0.1.0",
-        }
-        
-        # Add authentication if configured
-        auth_config = server_config.get("authentication", {})
-        if auth_config.get("enabled", False):
-            auth_type = auth_config.get("type", "bearer")
-            api_key = auth_config.get("api_key", "")
-            
-            if auth_type.lower() == "bearer" and api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            elif auth_type.lower() == "api_key" and api_key:
-                headers["X-API-Key"] = api_key
-        
-        health_endpoint = f"{url.rstrip('/')}/health"
-        
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        for server_name, client in self._client_cache.items():
             try:
-                response = await client.get(health_endpoint, headers=headers)
-                response.raise_for_status()
-                
-                return {
-                    "healthy": True,
-                    "data": response.json(),
-                    "last_check": datetime.utcnow().isoformat(),
-                }
-                
+                await client.__aexit__(None, None, None)
+                logger.info("✅ Closed connection", server=server_name)
             except Exception as e:
-                return {
-                    "healthy": False,
-                    "error": str(e),
-                    "last_check": datetime.utcnow().isoformat(),
-                }
+                logger.error(
+                    "❌ Error closing connection",
+                    server=server_name,
+                    error=str(e),
+                )
+        
+        self._client_cache.clear()
 
 
 # Global MCP client instance

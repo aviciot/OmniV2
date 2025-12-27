@@ -12,7 +12,7 @@ from app.services.mcp_client import get_mcp_client, MCPClient
 from app.utils.logger import logger
 
 
-router = APIRouter(prefix="/mcp/tools", tags=["mcp-tools"])
+router = APIRouter(prefix="/mcp/tools")
 
 
 # ============================================================
@@ -177,4 +177,144 @@ async def check_server_health(
         raise HTTPException(
             status_code=500,
             detail=f"Health check failed: {str(e)}",
+        )
+
+
+@router.get("/servers")
+async def list_mcp_servers(
+    enabled_only: bool = False,
+    include_health: bool = False,
+    mcp_client: MCPClient = Depends(get_mcp_client),
+):
+    """
+    List all configured MCP servers with their status and capabilities.
+    
+    Args:
+        enabled_only: If True, only return enabled MCP servers
+        include_health: If True, perform live health check for each server
+        mcp_client: MCP client instance (injected)
+    
+    Returns:
+        List of MCP servers with configuration details
+        
+    Examples:
+        - GET /mcp/servers - All MCPs
+        - GET /mcp/servers?enabled_only=true - Only enabled MCPs
+        - GET /mcp/servers?include_health=true - All MCPs with health status
+    """
+    try:
+        logger.info(
+            "📋 Listing configured MCP servers",
+            enabled_only=enabled_only,
+            include_health=include_health,
+        )
+        
+        servers = []
+        for server_name, server_config in mcp_client.servers.items():
+            # Skip if config is None or invalid
+            if not server_config or not isinstance(server_config, dict):
+                continue
+            
+            is_enabled = server_config.get("enabled", True)
+            
+            # Filter by enabled status if requested
+            if enabled_only and not is_enabled:
+                continue
+            
+            # Get basic server info
+            server_info = {
+                "name": server_name,
+                "display_name": server_config.get("display_name", server_name),
+                "protocol": server_config.get("protocol", "http"),
+                "enabled": is_enabled,
+                "description": server_config.get("description", ""),
+                "tags": server_config.get("tags", []),
+                "timeout_seconds": server_config.get("timeout_seconds", 30),
+            }
+            
+            # Add protocol-specific details
+            if server_info["protocol"] == "http":
+                server_info["url"] = server_config.get("url", "")
+                auth_config = server_config.get("authentication", {})
+                if auth_config:
+                    server_info["authentication"] = {
+                        "enabled": auth_config.get("enabled", False),
+                        "type": auth_config.get("type", ""),
+                    }
+            elif server_info["protocol"] == "stdio":
+                server_info["command"] = server_config.get("command", "")
+                server_info["args"] = server_config.get("args", [])
+            
+            # Add tool policy info
+            tool_policy = server_config.get("tool_policy", {})
+            if isinstance(tool_policy, dict):
+                server_info["tool_policy"] = {
+                    "mode": tool_policy.get("mode", "allow_all"),
+                    "excluded_count": len(tool_policy.get("exclude", [])),
+                }
+            
+            # Add rate limit info if configured
+            rate_limit = server_config.get("rate_limit", {})
+            if isinstance(rate_limit, dict) and rate_limit:
+                server_info["rate_limit"] = {
+                    "requests_per_minute": rate_limit.get("requests_per_minute"),
+                    "burst": rate_limit.get("burst"),
+                }
+            
+            # Perform live health check if requested
+            if include_health and is_enabled:
+                try:
+                    health = await mcp_client.health_check(server_name)
+                    server_info["health"] = {
+                        "status": "healthy" if health.get("healthy") else "unhealthy",
+                        "tool_count": health.get("tool_count", 0),
+                        "last_check": health.get("last_check"),
+                        "error": health.get("error"),
+                    }
+                except Exception as e:
+                    server_info["health"] = {
+                        "status": "error",
+                        "error": str(e),
+                    }
+            elif include_health and not is_enabled:
+                server_info["health"] = {
+                    "status": "disabled",
+                }
+            
+            servers.append(server_info)
+        
+        # Count enabled vs disabled (from all servers, not filtered)
+        all_servers_count = len(mcp_client.servers)
+        enabled_count = sum(
+            1 for cfg in mcp_client.servers.values() 
+            if isinstance(cfg, dict) and cfg.get("enabled", True)
+        )
+        disabled_count = all_servers_count - enabled_count
+        
+        return {
+            "success": True,
+            "data": {
+                "servers": servers,
+                "summary": {
+                    "total": len(servers),  # Filtered count
+                    "total_configured": all_servers_count,  # All configured
+                    "enabled": enabled_count,
+                    "disabled": disabled_count,
+                    "protocols": {
+                        "http": sum(1 for s in servers if s["protocol"] == "http"),
+                        "stdio": sum(1 for s in servers if s["protocol"] == "stdio"),
+                        "sse": sum(1 for s in servers if s["protocol"] == "sse"),
+                    }
+                }
+            }
+        }
+        
+    except Exception as e:
+        logger.error(
+            "❌ Failed to list MCP servers",
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to list servers: {str(e)}",
         )

@@ -16,6 +16,8 @@ services:
       - .:/app
       # Mount logs
       - ./logs:/app/logs
+      # Mount Docker socket for stdio MCP servers (like GitHub MCP)
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       # Application
       - APP_ENV=development
@@ -52,6 +54,9 @@ services:
       - MCP_ORACLE_URL=http://host.docker.internal:8001
       - MCP_ORACLE_TIMEOUT=30
       - MCP_ORACLE_API_KEY=${MCP_ORACLE_API_KEY:-U1f1mzzSvNKhrtntjJeE0O1KUz-7r7TiuR1-ushQXoc}
+      
+      # GitHub MCP (stdio via Docker)
+      - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PERSONAL_ACCESS_TOKEN}
       
       # Slack Bot (optional for Phase 1)
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}

@@ -74,7 +74,11 @@ class MCPServerConfig(BaseModel):
     """Configuration for a single MCP server."""
     name: str
     display_name: str
-    url: str
+    protocol: str = "http"  # Options: http, stdio, sse
+    url: Optional[str] = None  # Required for http/sse, not for stdio
+    command: Optional[str] = None  # Required for stdio
+    args: List[str] = Field(default_factory=list)  # For stdio
+    cwd: Optional[str] = None  # Working directory for stdio
     enabled: bool = True
     timeout_seconds: int = 30
     description: str = ""

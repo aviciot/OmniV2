@@ -43,7 +43,8 @@ mcps:
   # ------------------------------
   - name: oracle_mcp
     display_name: "Oracle Performance Analyzer"
-    url: http://host.docker.internal:8300
+    protocol: http  # Options: http, stdio, sse
+    url: http://host.docker.internal:8300/mcp  # MCP endpoint
     enabled: true
     timeout_seconds: 45
     description: "Oracle database performance monitoring and query analysis"
@@ -98,6 +99,104 @@ mcps:
       burst: 10
   
   # ------------------------------
+  # GitHub MCP Server
+  # ------------------------------
+  - name: github_mcp
+    display_name: "GitHub Repository & API Access"
+    protocol: http
+    url: https://api.githubcopilot.com/mcp
+    enabled: true
+    timeout_seconds: 60
+    description: "GitHub repository management, issues, PRs, code search, and API access"
+    
+    # Authentication with GitHub Personal Access Token
+    authentication:
+      enabled: true
+      type: "bearer"
+      api_key: "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+    
+    # Tags for easier filtering
+    tags:
+      - github
+      - git
+      - repository
+      - code-review
+      - ci-cd
+    
+    # Tool exposure policy - RESTRICTED TO READ-ONLY FOR TESTING
+    tool_policy:
+      mode: "allow_only"
+      allow:
+        - "search_repositories"    # Search for repos
+        - "get_file_contents"      # View file contents
+    
+    # Role-based restrictions
+    role_restrictions:
+      read_only:
+        allow_only:
+          - "get_*"
+          - "list_*"
+          - "search_*"
+          - "file_*"
+      
+      power_user:
+        allow_all_except:
+          - "delete_*"
+          - "force_push"
+      
+      admin:
+        allow_all: true
+    
+    # Rate limiting (GitHub has API rate limits)
+    rate_limit:
+      requests_per_minute: 30
+      burst: 5
+  
+  # ------------------------------
+  # Example: Stdio-based MCP (e.g., local filesystem MCP)
+  # ------------------------------
+  - name: filesystem_mcp
+    display_name: "Filesystem Tools"
+    protocol: stdio  # Stdio protocol - runs as subprocess
+    command: "python"  # Command to execute
+    args:  # Command arguments
+      - "-m"
+      - "filesystem_mcp.server"
+    cwd: "${MCP_FILESYSTEM_PATH}"  # Working directory (optional)
+    enabled: false  # Disabled by default - enable when ready
+    timeout_seconds: 30
+    description: "Local filesystem operations via stdio MCP protocol"
+    
+    # No authentication needed for stdio (process-level security)
+    authentication:
+      enabled: false
+    
+    tags:
+      - filesystem
+      - local
+      - stdio
+    
+    tool_policy:
+      mode: "allow_all_except"
+      exclude:
+        - "delete_*"
+        - "remove_*"
+    
+    role_restrictions:
+      read_only:
+        allow_only:
+          - "list_*"
+          - "read_*"
+          - "get_*"
+      
+      power_user:
+        allow_all_except:
+          - "delete_*"
+      
+      admin:
+        allow_all: true
+  
+  # ------------------------------
   # Smoke Test MCP (Future)
   # ------------------------------
   - name: smoketest_mcp
@@ -137,52 +236,7 @@ mcps:
       requests_per_minute: 10  # Tests are expensive
       burst: 2
   
-  # ------------------------------
-  # ETL Pipeline MCP (Future)
-  # ------------------------------
-  - name: etl_mcp
-    display_name: "ETL Pipeline Manager"
-    url: http://etl-mcp:8302
-    enabled: false
-    timeout_seconds: 60
-    description: "Manage and monitor ETL data pipelines"
-    
-    tags:
-      - etl
-      - data-pipeline
-      - batch-processing
-    
-    tool_policy:
-      mode: "allow_only"  # Strict whitelist approach
-      allow_only:
-        - "get_job_status"
-        - "list_pipelines"
-        - "view_job_logs"
-        - "trigger_job"  # Only for admins (see role_restrictions)
-    
-    role_restrictions:
-      read_only:
-        allow_only:
-          - "get_job_status"
-          - "list_pipelines"
-          - "view_job_logs"
-      
-      power_user:
-        allow_only:
-          - "get_job_status"
-          - "list_pipelines"
-          - "view_job_logs"
-          - "trigger_job"  # Can trigger but not configure
-      
-      dba:
-        allow_all: true
-      
-      admin:
-        allow_all: true  # Can configure pipelines
-    
-    rate_limit:
-      requests_per_minute: 30
-      burst: 5
+  
 
 # ============================================================
 # Role Definitions (Global)
