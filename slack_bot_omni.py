@@ -922,6 +922,8 @@ def handle_mention(event, say, client):
         channel_type = "channel"  # app_mention is always in a channel
         use_thread = thread_manager.should_use_thread(channel_type, thread_ts)
         
+        print(f"🧵 Threading Decision: use_thread={use_thread}, channel_type={channel_type}, existing_thread_ts={thread_ts}")
+        
         # Get or create thread for context
         if use_thread:
             thread_ts = thread_manager.get_or_create_thread(
@@ -931,6 +933,8 @@ def handle_mention(event, say, client):
                 channel_type
             )
             
+            print(f"🧵 Thread TS: {thread_ts}")
+            
             # Add user message to thread history
             thread_manager.add_user_message(thread_ts, text, slack_user_id)
             
@@ -938,8 +942,11 @@ def handle_mention(event, say, client):
             conversation_context = thread_manager.get_context_for_message(
                 text, thread_ts, slack_user_id, slack_channel, channel_type
             )
+            
+            print(f"🧵 Context Generated: {len(conversation_context) if conversation_context else 0} chars")
         else:
             conversation_context = None
+            print(f"🧵 Threading disabled, no context")
         
         # Build Slack context
         slack_context = {
@@ -953,10 +960,13 @@ def handle_mention(event, say, client):
         # Query OMNI2 with Slack context and conversation history
         result = omni.ask(user_email, text, slack_context, conversation_context)
         
+        print(f"🧵 OMNI2 Response received, success={result.get('success', False)}")
+        
         # Add assistant response to thread history
         if use_thread:
             assistant_message = result.get('answer', 'Error processing request')
             thread_manager.add_assistant_message(thread_ts, assistant_message)
+            print(f"🧵 Added assistant response to thread history")
         
         # Format and send response in thread
         formatted = format_response(result)

@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements-slack.txt
 # Copy bot code and thread manager
 COPY slack_bot_omni.py .
 COPY thread_manager.py .
+COPY test_threading.py .
 
 # Run the bot
 CMD ["python", "-u", "slack_bot_omni.py"]
