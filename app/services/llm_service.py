@@ -51,14 +51,15 @@ class LLMService:
             System prompt string
         """
         user = self.user_service.get_user(user_id)
+        user_role = user.get("role", "read_only")
         allowed_mcps = self.user_service.get_allowed_mcps(user_id)
         allowed_domains = self.user_service.get_allowed_domains(user_id)
         
-        # Get available tools for user's allowed MCPs
+        # Get available tools for user's allowed MCPs with tool-level filtering
         tools_catalog = []
         
         if allowed_mcps == "*":
-            # Admin - get all MCPs
+            # Admin - get all MCPs and all tools
             all_tools = await self.mcp_client.list_tools()
             for mcp_name, mcp_data in all_tools.get("servers", {}).items():
                 if mcp_data.get("status") == "healthy":
@@ -69,23 +70,59 @@ class LLMService:
                             "description": tool["description"],
                         })
         else:
-            # Regular user - only allowed MCPs
-            for mcp_name in allowed_mcps:
+            # Regular user - filter by allowed MCPs and tools
+            # Handle both old format (list) and new format (dict)
+            mcp_list = []
+            if isinstance(allowed_mcps, list):
+                mcp_list = allowed_mcps
+            elif isinstance(allowed_mcps, dict):
+                mcp_list = list(allowed_mcps.keys())
+            
+            for mcp_name in mcp_list:
                 try:
-                    mcp_tools = await self.mcp_client.list_tools(mcp_name)
-                    for tool in mcp_tools.get("servers", {}).get(mcp_name, {}).get("tools", []):
-                        tools_catalog.append({
-                            "mcp": mcp_name,
-                            "name": tool["name"],
-                            "description": tool["description"],
-                        })
+                    mcp_tools_response = await self.mcp_client.list_tools(mcp_name)
+                    all_tools_in_mcp = mcp_tools_response.get("servers", {}).get(mcp_name, {}).get("tools", [])
+                    
+                    # Get list of all tool names for permission checking
+                    all_tool_names = [t["name"] for t in all_tools_in_mcp]
+                    
+                    # Apply tool-level permissions
+                    allowed_tool_names = self.user_service.get_user_allowed_tools(
+                        user_id, mcp_name, all_tool_names
+                    )
+                    
+                    # Filter tools by user permissions
+                    for tool in all_tools_in_mcp:
+                        if tool["name"] in allowed_tool_names:
+                            tools_catalog.append({
+                                "mcp": mcp_name,
+                                "name": tool["name"],
+                                "description": tool["description"],
+                            })
+                        else:
+                            logger.debug(
+                                "Tool filtered for user",
+                                user=user_id,
+                                role=user_role,
+                                mcp=mcp_name,
+                                tool=tool["name"]
+                            )
+                    
                 except Exception as e:
                     logger.warning(f"Could not load tools from {mcp_name}", error=str(e))
+        
+        logger.info(
+            "Built tool catalog for user",
+            user=user_id,
+            role=user_role,
+            total_tools=len(tools_catalog),
+            mcps_accessed=len(set(t["mcp"] for t in tools_catalog))
+        )
         
         # Build prompt
         prompt = f"""You are OMNI2, an intelligent MCP (Model Context Protocol) router and assistant.
 
-User: {user.get('name', user_id)} ({user.get('role', 'user')})
+User: {user.get('name', user_id)} ({user_role})
 
 AVAILABLE TOOLS:
 You can call these MCP tools to help the user:
@@ -122,6 +159,34 @@ RULES:
 4. Always be helpful, accurate, and concise
 5. If a tool fails, explain the error and suggest alternatives
 
+SLACK FORMATTING (when user context includes slack_context):
+- Use *bold* for emphasis, not **double**
+- Use `code` for SQL, numbers, table names
+- Use • for bullet points
+- Keep sentences short and scannable
+- Use emojis sparingly (✅ ❌ ⚠️ 📊 🚀 only)
+- Format tables clearly with proper spacing
+- Group related info with blank lines
+- Start with TL;DR for long responses
+- Use "→" for showing cause/effect
+- NO markdown headers (#), use *Section Name* instead
+
+Example Good Slack Format:
+*Database Health: transformer_master*
+
+Status: ✅ Healthy
+• Uptime: 45 days
+• Connections: 142/200 (71%)
+• Top wait event: `log file sync` (15%)
+
+*Action Items:*
+1. Monitor `log file sync` - nearing threshold
+2. Consider connection pooling review
+
+Example Bad Format:
+## Database Health
+The database transformer_master is healthy. It has been up for 45 days...
+
 When calling tools, use the exact tool name and provide all required arguments.
 """
         
@@ -137,10 +202,13 @@ When calling tools, use the exact tool name and provide all required arguments.
         Returns:
             List of tool definitions for Claude
         """
+        user = self.user_service.get_user(user_id)
+        user_role = user.get("role", "read_only")
         allowed_mcps = self.user_service.get_allowed_mcps(user_id)
         claude_tools = []
         
         if allowed_mcps == "*":
+            # Admin - all tools
             all_tools = await self.mcp_client.list_tools()
             for mcp_name, mcp_data in all_tools.get("servers", {}).items():
                 if mcp_data.get("status") == "healthy":
@@ -151,17 +219,43 @@ When calling tools, use the exact tool name and provide all required arguments.
                             "input_schema": tool["inputSchema"],
                         })
         else:
-            for mcp_name in allowed_mcps:
+            # Regular user - filter by MCP and tool-level permissions
+            mcp_list = []
+            if isinstance(allowed_mcps, list):
+                mcp_list = allowed_mcps
+            elif isinstance(allowed_mcps, dict):
+                mcp_list = list(allowed_mcps.keys())
+            
+            for mcp_name in mcp_list:
                 try:
-                    mcp_tools = await self.mcp_client.list_tools(mcp_name)
-                    for tool in mcp_tools.get("servers", {}).get(mcp_name, {}).get("tools", []):
-                        claude_tools.append({
-                            "name": f"{mcp_name}__{tool['name']}",
-                            "description": f"[{mcp_name}] {tool['description']}",
-                            "input_schema": tool["inputSchema"],
-                        })
+                    mcp_tools_response = await self.mcp_client.list_tools(mcp_name)
+                    all_tools_in_mcp = mcp_tools_response.get("servers", {}).get(mcp_name, {}).get("tools", [])
+                    
+                    # Get tool names for permission checking
+                    all_tool_names = [t["name"] for t in all_tools_in_mcp]
+                    
+                    # Apply tool-level permissions
+                    allowed_tool_names = self.user_service.get_user_allowed_tools(
+                        user_id, mcp_name, all_tool_names
+                    )
+                    
+                    # Build Claude tools only for allowed tools
+                    for tool in all_tools_in_mcp:
+                        if tool["name"] in allowed_tool_names:
+                            claude_tools.append({
+                                "name": f"{mcp_name}__{tool['name']}",
+                                "description": f"[{mcp_name}] {tool['description']}",
+                                "input_schema": tool["inputSchema"],
+                            })
                 except Exception as e:
                     logger.warning(f"Could not load tools from {mcp_name}", error=str(e))
+        
+        logger.info(
+            "Built Claude tools",
+            user=user_id,
+            role=user_role,
+            tool_count=len(claude_tools)
+        )
         
         return claude_tools
     

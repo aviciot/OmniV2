@@ -318,3 +318,91 @@ async def list_mcp_servers(
             status_code=500,
             detail=f"Failed to list servers: {str(e)}",
         )
+
+
+@router.get("/mcps/{mcp_name}/tools")
+async def get_mcp_tools_for_user(
+    mcp_name: str,
+    user_email: str,
+    mcp_client: MCPClient = Depends(get_mcp_client),
+):
+    """
+    Get tools available for a specific MCP server filtered by user permissions.
+    
+    Args:
+        mcp_name: Name of the MCP server
+        user_email: User's email address
+        mcp_client: MCP client instance (injected)
+        
+    Returns:
+        Dict with MCP info and filtered tools list
+    """
+    try:
+        from app.services.user_service import get_user_service
+        
+        logger.info(
+            "🔍 Getting MCP tools for user",
+            mcp_name=mcp_name,
+            user_email=user_email,
+        )
+        
+        # Get all tools for this MCP
+        all_tools_response = await mcp_client.list_tools(server_name=mcp_name)
+        
+        # Handle the response format: {"servers": {mcp_name: {...}}}
+        all_tools = all_tools_response.get("servers", {})
+        
+        if mcp_name not in all_tools:
+            raise HTTPException(
+                status_code=404,
+                detail=f"MCP server '{mcp_name}' not found"
+            )
+        
+        mcp_data = all_tools[mcp_name]
+        all_tool_names = [tool["name"] for tool in mcp_data.get("tools", [])]
+        
+        # Filter tools by user permissions
+        user_service = get_user_service()
+        allowed_tools = user_service.get_user_allowed_tools(
+            user_id=user_email,
+            mcp_name=mcp_name,
+            all_tools=all_tool_names
+        )
+        
+        # Filter the tool list
+        filtered_tools = [
+            tool for tool in mcp_data.get("tools", [])
+            if tool["name"] in allowed_tools
+        ]
+        
+        logger.info(
+            "✅ Filtered tools for user",
+            mcp_name=mcp_name,
+            user_email=user_email,
+            total_tools=len(all_tool_names),
+            allowed_tools=len(filtered_tools),
+        )
+        
+        return {
+            "success": True,
+            "mcp_name": mcp_name,
+            "description": mcp_data.get("description", f"Tools from {mcp_name}"),
+            "tools": filtered_tools,
+            "total_available": len(all_tool_names),
+            "user_allowed": len(filtered_tools),
+        }
+        
+    except HTTPException:
+        raise
+        
+    except Exception as e:
+        logger.error(
+            "❌ Failed to get MCP tools for user",
+            mcp_name=mcp_name,
+            user_email=user_email,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get tools: {str(e)}",
+        )

@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 import asyncio
 import fnmatch
+import time
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 
@@ -21,6 +22,9 @@ from app.utils.logger import logger
 class MCPClient:
     """Multi-protocol MCP client supporting HTTP, Stdio, and SSE transports."""
     
+    # Tool schema cache TTL (5 minutes)
+    TOOL_CACHE_TTL = 300
+    
     def __init__(self):
         """Initialize MCP client with configured servers."""
         # Convert list of MCPServerConfig to dict for easier lookup
@@ -29,6 +33,10 @@ class MCPClient:
             for server in settings.mcps.mcps
         }
         self._client_cache: Dict[str, Client] = {}
+        
+        # Tool schema cache
+        self._tool_cache: Dict[str, Dict[str, Any]] = {}
+        self._tool_cache_timestamp: Dict[str, float] = {}
         
     async def _get_client(self, server_name: str) -> Client:
         """
@@ -320,18 +328,30 @@ class MCPClient:
             "timestamp": datetime.utcnow().isoformat(),
         }
     
-    async def _fetch_tools_native(self, server_name: str) -> Dict[str, Any]:
+    async def _fetch_tools_native(self, server_name: str, use_cache: bool = True) -> Dict[str, Any]:
         """
-        Fetch tools from FastMCP server using native MCP protocol.
+        Fetch tools from FastMCP server using native MCP protocol with caching.
         
         Args:
             server_name: Name of the MCP server
+            use_cache: Whether to use cached tools (default: True)
             
         Returns:
             Dict with tools and server info
         """
+        # Check cache first
+        if use_cache and server_name in self._tool_cache:
+            age = time.time() - self._tool_cache_timestamp.get(server_name, 0)
+            if age < self.TOOL_CACHE_TTL:
+                logger.info(
+                    "✅ Using cached tools",
+                    server=server_name,
+                    cache_age_seconds=round(age, 1),
+                )
+                return self._tool_cache[server_name]
+        
         logger.info(
-            "🔍 Fetching tools from FastMCP server",
+            "� Fetching fresh tools from FastMCP server",
             server=server_name,
         )
         
@@ -368,7 +388,7 @@ class MCPClient:
                 tool_count=len(filtered_tools),
             )
             
-            return {
+            result = {
                 "tools": filtered_tools,
                 "server_info": {
                     "name": server_name,
@@ -377,6 +397,12 @@ class MCPClient:
                 "status": "healthy",
                 "last_check": datetime.utcnow().isoformat(),
             }
+            
+            # Cache the result
+            self._tool_cache[server_name] = result
+            self._tool_cache_timestamp[server_name] = time.time()
+            
+            return result
             
         except Exception as e:
             logger.error(
@@ -501,6 +527,40 @@ class MCPClient:
                 "last_check": datetime.utcnow().isoformat(),
             }
     
+    def invalidate_cache(self, server_name: Optional[str] = None):
+        """
+        Invalidate tool schema cache.
+        
+        Args:
+            server_name: Specific server to invalidate, or None for all
+        """
+        if server_name:
+            self._tool_cache.pop(server_name, None)
+            self._tool_cache_timestamp.pop(server_name, None)
+            logger.info("🗑️  Invalidated cache", server=server_name)
+        else:
+            self._tool_cache.clear()
+            self._tool_cache_timestamp.clear()
+            logger.info("🗑️  Invalidated all caches")
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics."""
+        current_time = time.time()
+        stats = {
+            "cached_servers": len(self._tool_cache),
+            "servers": {}
+        }
+        
+        for server_name, timestamp in self._tool_cache_timestamp.items():
+            age = current_time - timestamp
+            stats["servers"][server_name] = {
+                "age_seconds": round(age, 1),
+                "ttl_remaining": round(self.TOOL_CACHE_TTL - age, 1),
+                "tool_count": len(self._tool_cache[server_name].get("tools", [])),
+            }
+        
+        return stats
+    
     async def close(self):
         """Close all client connections."""
         logger.info("🔌 Closing MCP client connections")
@@ -517,6 +577,8 @@ class MCPClient:
                 )
         
         self._client_cache.clear()
+        self._tool_cache.clear()
+        self._tool_cache_timestamp.clear()
 
 
 # Global MCP client instance

@@ -161,6 +161,9 @@ services:
       - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
       - OMNI2_URL=http://omni2:8000
       - DEFAULT_USER_EMAIL=${DEFAULT_USER_EMAIL:-default@company.com}
+    volumes:
+      - ./config:/app/config:ro  # Mount config directory for slack.yaml
+      - ./slack_bot_omni.py:/app/slack_bot_omni.py  # Hot-reload for development
     networks:
       - omni2-network
     depends_on:

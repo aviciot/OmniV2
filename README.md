@@ -663,11 +663,32 @@ Internal project - Company proprietary
 - ✅ Slack context logging (user_id, channel, message_ts, thread_ts)
 - ✅ Docker deployment integration
 - ✅ Comprehensive setup documentation (SLACK_INTEGRATION.md)
+- ✅ User role display in responses (configurable)
+- ✅ Enhanced user identification and logging
+- ✅ MCP health check enhancements (enabled vs reachable)
 
-### Phase 7: Advanced Features 🔮 FUTURE
-- 🔮 Conversation context & history
+### Phase 7: Conversation Context & UX Enhancements 🚧 IN PROGRESS
+**Thread-Based Context** (Next Sprint):
+- 🚧 Store conversation history per Slack thread
+- 🚧 Include previous 5-10 messages as context for follow-ups
+- 🚧 Redis/Postgres storage with 30-minute TTL
+- � Natural follow-ups: "yes", "show more", "explain further"
+- 🚧 Thread context UI: Show "💬 Using thread context (3 messages)"
+
+**Interactive Buttons** (Future):
+- 🔜 Action buttons for common operations: "Show More", "Export CSV", "Run Analysis"
+- 🔜 Button-embedded context (no storage needed)
+- � Pre-defined actions with parameters
+
+**Advanced Slack Features** (Future):
+- 🔜 Slack Official MCP integration (bidirectional messaging)
+- 🔜 Modal dialogs for complex forms
+- 🔜 Scheduled reports to channels
+- 🔜 User preference management via DM
+
+### Phase 8: Advanced Features 🔮 FUTURE
 - 🔮 Redis caching for tool results
-- 🔮 Rate limiting per user/role
+- 🔮 Rate limiting per user/role (beyond basic)
 - 🔮 Web UI dashboard
 - 🔮 Real-time streaming responses
 - 🔮 Advanced analytics & reporting
@@ -676,7 +697,7 @@ Internal project - Company proprietary
 - 🔮 Prometheus metrics & Grafana dashboards
 - 🔮 Auto-scaling & load balancing
 
-### Phase 8: Long-Running Operations 🤔 DESIGN PHASE
+### Phase 9: Long-Running Operations 🤔 DESIGN PHASE
 - 🤔 Async job queue with ARQ (native async)
 - 🤔 Redis for job storage and results
 - 🤔 POST /chat/ask/async endpoint (returns job_id)
@@ -690,4 +711,4 @@ Internal project - Company proprietary
 ---
 
 **Last Updated:** December 28, 2024
-**Current Status:** Phase 5 Complete, Phase 6 Next (Slack Bot)
+**Current Status:** Phase 6 Complete (Slack Bot), Phase 7 In Progress (Thread Context)

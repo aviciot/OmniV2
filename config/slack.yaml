@@ -118,6 +118,87 @@ behavior:
   include_error_id: true  # Include error ID for support
 
 # ============================================================
+# User Info Display
+# ============================================================
+user_info_display:
+  # Show user role and permissions at beginning of response
+  enabled: true
+  
+  # Display format options:
+  # - minimal: "🔑 Admin"
+  # - standard: "👤 Avi Cohen (Admin)"
+  # - detailed: "👤 Avi Cohen | Role: Admin | MCPs: 3 available"
+  # - first_only: Show only on first interaction of the day
+  format: "standard"
+  
+  # Where to show user info
+  show_in_dm: true           # Direct messages - always show
+  show_in_channels: false    # Public channels - hide for privacy
+  show_in_threads: true      # Thread replies
+  
+  # What information to include
+  elements:
+    show_name: true          # User's real name
+    show_role: true          # Role badge (admin, power_user, read_only, etc.)
+    show_email: false        # Email address (privacy concern)
+    show_mcp_count: true     # "Access to 3 MCPs"
+    show_mcp_names: false    # Don't list all MCP names (too verbose)
+    show_permissions: false  # Allowed domains/databases
+  
+  # Role emojis (customize per role)
+  role_emojis:
+    admin: "👑"
+    dba: "🔧"
+    power_user: "⚡"
+    qa_tester: "🧪"
+    read_only: "👁️"
+    default: "👤"
+  
+  # Color coding for different roles (Slack message colors)
+  role_colors:
+    admin: "#FF6B6B"        # Red
+    dba: "#4ECDC4"          # Teal
+    power_user: "#FFE66D"   # Yellow
+    qa_tester: "#95E1D3"    # Mint
+    read_only: "#C7CEEA"    # Light purple
+    default: "#E0E0E0"      # Gray
+
+# ============================================================
+# Diagnostic Information Display
+# ============================================================
+diagnostic_info:
+  # Show LLM iterations, MCP choices, and tool selections
+  # Useful for transparency and debugging
+  enabled: false  # Default: off (can be overwhelming)
+  
+  # What diagnostic data to show
+  show_iterations: true        # Number of LLM reasoning iterations
+  show_tool_calls: true        # Total number of tool invocations
+  show_mcp_choices: true       # Which MCPs and tools were used
+  show_timing: true            # Response time breakdown
+  show_tokens: false           # Token usage (might be technical)
+  
+  # Where to show diagnostics
+  show_in_dm: true             # Direct messages - users might find it interesting
+  show_in_channels: false      # Public channels - keep clean
+  show_in_threads: true        # Thread replies - less intrusive
+  
+  # Format style
+  # - compact: "🔧 2 iterations, 3 tools, 8.3s"
+  # - detailed: Shows breakdown per MCP
+  format: "compact"
+  
+  # Only show for certain roles (optional)
+  show_for_roles: null  # null = all users, or ["admin", "dba", "power_user"]
+  
+  # Example output:
+  # 🔧 *Behind the scenes:*
+  # • Iterations: 2
+  # • Tool calls: 3
+  # • Tools used: `database_mcp.get_health`, `database_mcp.get_top_queries`, `github_mcp.search_repos`
+  # • Response time: 8.3s (LLM: 3.2s, Tools: 4.5s, Formatting: 0.6s)
+
+# ============================================================
 # Channels & Notifications
 # ============================================================
 channels:
