@@ -149,7 +149,27 @@ services:
       retries: 5
 
   # ============================================================
-  # Redis (Phase 2 - for caching and sessions)
+  # Slack Bot (Phase 6 - Natural language Slack integration)
+  # ============================================================
+  slack_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.slack
+    container_name: omni2-slack-bot
+    environment:
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+      - OMNI2_URL=http://omni2:8000
+      - DEFAULT_USER_EMAIL=${DEFAULT_USER_EMAIL:-default@company.com}
+    networks:
+      - omni2-network
+    depends_on:
+      - omni2
+    restart: unless-stopped
+    # Note: Slack bot uses Socket Mode (WebSocket), no ports needed
+
+  # ============================================================
+  # Redis (Phase 7 - for caching and sessions)
   # ============================================================
   # redis:
   #   image: redis:7-alpine

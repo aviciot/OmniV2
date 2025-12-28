@@ -1,0 +1,4 @@
+# OMNI2 Slack Bot Requirements
+slack-bolt>=1.18.0
+slack-sdk>=3.23.0
+requests>=2.31.0
