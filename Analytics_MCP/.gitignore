@@ -1,0 +1,50 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+.env
+.env.*
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# IDE / Editor configs
+.idea/
+.vscode/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Node tooling (if present)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker artifacts
+.docker/
+
+# Coverage / test outputs
+.coverage
+htmlcov/
+coverage.xml
+pytest-cache/
+.pytest_cache/
+
+# Type checker caches
+.mypy_cache/
+.pytype/
+pyrightconfig.json
+
+# Local data
+*.sqlite3
+

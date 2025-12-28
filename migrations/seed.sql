@@ -43,7 +43,8 @@ VALUES
     ('database_mcp', 'http://database-mcp:8001', true, true),
     ('github_mcp', 'http://github-mcp:8002', true, true),
     ('filesystem_mcp', 'http://filesystem-mcp:8003', false, true),
-    ('smoketest_mcp', 'http://smoketest-mcp:8004', false, true)
+    ('smoketest_mcp', 'http://smoketest-mcp:8004', false, true),
+    ('omni2_analytics_mcp', 'http://analytics_mcp:8302', true, true)
 ON CONFLICT (name) DO UPDATE SET
     url = EXCLUDED.url,
     is_enabled = EXCLUDED.is_enabled,
@@ -73,6 +74,7 @@ BEGIN
     RAISE NOTICE '  • github_mcp (enabled)';
     RAISE NOTICE '  • filesystem_mcp (disabled)';
     RAISE NOTICE '  • smoketest_mcp (disabled)';
+    RAISE NOTICE '  • omni2_analytics_mcp (enabled - admin only)';
     RAISE NOTICE '';
     RAISE NOTICE '🚀 Database ready for use!';
     RAISE NOTICE '============================================================';

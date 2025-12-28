@@ -1,0 +1,13 @@
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "${MCP_PORT:-9009}:${MCP_PORT:-9009}"
+    volumes:
+      - ./server:/app
+    env_file:
+      - .env
+    restart: unless-stopped
+

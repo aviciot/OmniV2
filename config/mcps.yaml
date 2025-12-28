@@ -236,7 +236,106 @@ mcps:
       requests_per_minute: 10  # Tests are expensive
       burst: 2
   
-  
+
+  # ------------------------------
+  # MCP Dummy Template Server
+  # ------------------------------
+  - name: dummy_mcp
+    display_name: "MCP For Demon"
+    protocol: http
+    url: http://host.docker.internal:9009/mcp  # MCP endpoint
+    enabled: true
+    timeout_seconds: 30
+    description: "Simple MCP server template with basic tools, prompts, and resources for testing and learning"
+    
+    # Authentication (optional for local development)
+    authentication:
+      enabled: false
+    
+    # Tags for easier filtering
+    tags:
+      - template
+      - examples
+      - learning
+      - basic
+      - demo
+    
+    # Tool exposure policy - ONLY allow greet_user
+    tool_policy:
+      mode: "allow_only"
+      allow:
+        - "greet_user"
+    
+    # Role-based restrictions for this MCP
+    role_restrictions:
+      read_only:
+        allow_all: true  # All tools are safe for read-only users
+      
+      power_user:
+        allow_all: true
+      
+      dba:
+        allow_all: true
+      
+      admin:
+        allow_all: true
+    
+    # Rate limiting per MCP (optional - generous for local development)
+    rate_limit:
+      requests_per_minute: 120
+      burst: 20
+
+  # ------------------------------
+  # OMNI2 Analytics MCP - Internal System Analytics (Admin Only)
+  # ------------------------------
+  - name: omni2_analytics_mcp
+    display_name: "OMNI2 Internal Analytics (Admin Only)"
+    protocol: http
+    url: http://analytics_mcp:8302/mcp
+    enabled: true
+    timeout_seconds: 60
+    description: "Internal analytics for OMNI2 system metrics, cost tracking, audit log analysis, and performance monitoring. Restricted to administrators only for monitoring OMNI2 usage patterns."
+    
+    # No authentication needed (internal service)
+    authentication:
+      enabled: false
+    
+    # Tags for LLM routing
+    tags:
+      - internal
+      - analytics
+      - admin-only
+      - omni2
+      - audit
+      - monitoring
+      - cost-tracking
+    
+    # Tool exposure policy - All analytics tools available
+    tool_policy:
+      mode: "allow_all"
+    
+    # STRICT: Admin-only access
+    role_restrictions:
+      read_only:
+        deny_all: true  # Blocked
+      
+      power_user:
+        deny_all: true  # Blocked
+      
+      dba:
+        deny_all: true  # Blocked (unless you want DBAs to have access)
+      
+      qa_tester:
+        deny_all: true  # Blocked
+      
+      admin:
+        allow_all: true  # Only admins can query analytics
+    
+    # Rate limiting (analytics can be expensive)
+    rate_limit:
+      requests_per_minute: 30
+      burst: 5
+
 
 # ============================================================
 # Role Definitions (Global)

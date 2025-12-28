@@ -88,6 +88,39 @@ services:
       start_period: 40s
 
   # ============================================================
+  # OMNI2 Analytics MCP - Internal Analytics (Admin Only)
+  # ============================================================
+  analytics_mcp:
+    build:
+      context: ./Analytics_MCP/server
+      dockerfile: Dockerfile
+    container_name: omni2-analytics-mcp
+    ports:
+      - "8302:8302"
+    volumes:
+      # Mount code for hot-reload
+      - ./Analytics_MCP/server:/app
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/omni
+      - MCP_SERVER_NAME=omni2_analytics_mcp
+      - MCP_PORT=8302
+      - MCP_SERVER_URL=http://analytics_mcp:8302/mcp/
+      - CORS_ORIGINS=http://localhost,http://127.0.0.1,http://omni2
+      - LOG_LEVEL=INFO
+      - AUTO_DISCOVER=true
+    networks:
+      - omni2-network
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8302/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ============================================================
   # PostgreSQL Database (Optional - use if you don't have host DB)
   # ============================================================
   postgres:
