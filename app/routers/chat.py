@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 
 from app.services.llm_service import get_llm_service, LLMService
 from app.services.audit_service import get_audit_service, AuditService
+from app.services.user_service import get_user_service, UserService
+from app.services.rate_limiter import get_rate_limiter, RateLimiter
 from app.utils.logger import logger
 
 
@@ -51,6 +53,8 @@ async def ask_question(
     http_request: Request,
     llm_service: LLMService = Depends(get_llm_service),
     audit_service: AuditService = Depends(get_audit_service),
+    user_service: UserService = Depends(get_user_service),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> ChatResponse:
     """
     Ask a question with intelligent MCP routing.
@@ -91,6 +95,59 @@ async def ask_question(
             "📬 Chat request received",
             user=request.user_id,
             message_preview=request.message[:50],
+        )
+        
+        # Get user info for rate limiting
+        user_info = user_service.get_user(request.user_id)
+        user_role = user_info.get("role", "default")
+        
+        # Check rate limit
+        allowed, current_count, limit = rate_limiter.check_rate_limit(
+            user_id=request.user_id,
+            role=user_role
+        )
+        
+        if not allowed:
+            # Get reset time
+            reset_time = rate_limiter.get_window_reset_time(request.user_id)
+            reset_in_seconds = int(reset_time - time.time()) if reset_time else 3600
+            reset_in_minutes = reset_in_seconds // 60
+            
+            error_msg = (
+                f"Rate limit exceeded. You've made {current_count}/{limit} requests in the last hour. "
+                f"Please try again in {reset_in_minutes} minutes."
+            )
+            
+            logger.warning(
+                "🚫 Rate limit exceeded",
+                user=request.user_id,
+                role=user_role,
+                count=current_count,
+                limit=limit,
+                reset_in_minutes=reset_in_minutes
+            )
+            
+            # Log rate limit violation to audit
+            await audit_service.log_error(
+                user_id=request.user_id,
+                message=request.message,
+                error_message=f"Rate limit exceeded: {current_count}/{limit} requests",
+                duration_ms=0,
+                ip_address=http_request.client.host if http_request.client else None,
+                user_agent=http_request.headers.get("user-agent"),
+            )
+            
+            raise HTTPException(
+                status_code=429,
+                detail=error_msg
+            )
+        
+        logger.debug(
+            "✅ Rate limit check passed",
+            user=request.user_id,
+            role=user_role,
+            count=current_count,
+            limit=limit
         )
         
         # Process with LLM
