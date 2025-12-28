@@ -162,6 +162,84 @@ users:
       - general_knowledge
     teams: []
     allowed_databases: ["mysql_devdb03_avi"]  # Test DB only
+  
+  # ============================================================
+  # TEST USERS for Permission Testing
+  # ============================================================
+  
+  # Test User 1: Junior DBA with wildcard read permissions
+  - email: "test.junior.dba@shift4.com"
+    name: "Test Junior DBA"
+    role: "junior_dba"
+    allowed_mcps:
+      database_mcp:
+        mode: "custom"
+        tools:
+          - "get_*"              # get_database_health, get_top_queries, get_performance_trends
+          - "list_*"             # list_available_databases
+          - "analyze_*_query"    # analyze_oracle_query, analyze_mysql_query
+        # Blocked: compare_*_query_plans (too expensive for junior)
+      omni2_analytics_mcp:
+        mode: "custom"
+        tools:
+          - "get_*"              # All get_ analytics tools (read-only)
+      github_mcp: "*"            # All GitHub access
+      dummy_mcp: "*"             # Test MCP
+    allowed_domains:
+      - database_help
+      - sql_help
+      - general_knowledge
+    teams: ["database"]
+    allowed_databases: ["way4_docker7"]  # Training only
+  
+  # Test User 2: Senior Developer with broad but controlled access
+  - email: "test.senior.dev@shift4.com"
+    name: "Test Senior Developer"
+    role: "senior_dev"
+    allowed_mcps:
+      database_mcp:
+        mode: "inherit"  # Gets all tools from role in mcps.yaml
+      omni2_analytics_mcp:
+        mode: "inherit"
+      github_mcp:
+        mode: "inherit"
+      dummy_mcp:
+        mode: "custom"
+        tools: ["*"]  # Full dummy access
+    allowed_domains:
+      - python_help
+      - code_review
+      - database_help
+      - general_knowledge
+    teams: ["development", "backend"]
+    allowed_databases: ["*"]  # All databases
+  
+  # Test User 3: Restricted Contractor (minimal access)
+  - email: "test.contractor@external.com"
+    name: "Test Contractor"
+    role: "contractor"
+    allowed_mcps:
+      database_mcp:
+        mode: "custom"
+        tools:
+          - "list_available_databases"   # Only list databases
+          - "get_database_health"         # Only health checks
+        # Blocked: All query analysis and performance tools
+      omni2_analytics_mcp:
+        mode: "custom"
+        tools: []  # Completely blocked
+      github_mcp:
+        mode: "custom"
+        tools:
+          - "search_*"  # Only search operations
+        # Blocked: get_file_contents
+      dummy_mcp:
+        mode: "custom"
+        tools: []  # Blocked
+    allowed_domains:
+      - general_knowledge
+    teams: []
+    allowed_databases: ["mysql_devdb03_avi"]  # Test DB only
 
 # ============================================================
 # Role Definitions

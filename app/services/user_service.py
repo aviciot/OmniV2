@@ -81,6 +81,10 @@ class UserService:
         if allowed == "*":
             return "*"
         
+        # Handle new dict format {mcp_name: {mode: "custom", tools: [...]}}
+        if isinstance(allowed, dict):
+            return list(allowed.keys())
+        
         return allowed if isinstance(allowed, list) else []
     
     def can_access_mcp(self, user_id: str, mcp_name: str) -> bool:
