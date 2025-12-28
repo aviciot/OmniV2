@@ -12,6 +12,9 @@ import yaml
 from typing import Optional
 from pathlib import Path
 
+# Import ThreadManager from same directory
+from thread_manager import ThreadManager
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -78,6 +81,34 @@ DEFAULT_USER = os.environ.get("DEFAULT_USER_EMAIL", "default@company.com")
 app = App(token=SLACK_BOT_TOKEN)
 
 # ============================================================================
+# THREAD MANAGER
+# ============================================================================
+# Load threading configuration
+THREADING_CONFIG = {}
+try:
+    threading_config_file = CONFIG_DIR / "threading.yaml"
+    if threading_config_file.exists():
+        with open(threading_config_file, "r") as f:
+            THREADING_CONFIG = yaml.safe_load(f)
+        print(f"✅ Loaded threading config from {threading_config_file}")
+    else:
+        print(f"⚠️  Threading config not found: {threading_config_file}, using defaults")
+        THREADING_CONFIG = {
+            "threading": {"enabled": True, "behavior": {"always_use_threads": True}},
+            "context": {"enabled": True, "max_messages": 3}
+        }
+except Exception as e:
+    print(f"⚠️  Failed to load threading config: {e}, using defaults")
+    THREADING_CONFIG = {
+        "threading": {"enabled": True, "behavior": {"always_use_threads": True}},
+        "context": {"enabled": True, "max_messages": 3}
+    }
+
+# Initialize ThreadManager with config
+thread_manager = ThreadManager(THREADING_CONFIG)
+print(f"✅ ThreadManager initialized (threading {'enabled' if THREADING_CONFIG.get('threading', {}).get('enabled') else 'disabled'})")
+
+# ============================================================================
 # OMNI2 CLIENT
 # ============================================================================
 class OMNI2Client:
@@ -87,7 +118,7 @@ class OMNI2Client:
         self.base_url = base_url
         self.headers = {"Content-Type": "application/json"}
     
-    def ask(self, user_email: str, message: str, slack_context: dict = None) -> dict:
+    def ask(self, user_email: str, message: str, slack_context: dict = None, conversation_context: str = None) -> dict:
         """
         Send natural language query to OMNI2
         
@@ -95,10 +126,15 @@ class OMNI2Client:
             user_email: User's email (for permissions)
             message: Natural language question
             slack_context: Slack metadata (user_id, channel, message_ts, thread_ts)
+            conversation_context: Previous conversation history for context
             
         Returns:
             Response from OMNI2 with answer and metadata
         """
+        # Prepend conversation context if provided
+        if conversation_context:
+            message = f"{conversation_context}\n\nCurrent Question: {message}"
+        
         payload = {
             "user_id": user_email,
             "message": message,
@@ -867,6 +903,7 @@ def handle_mention(event, say, client):
         slack_user_id = event['user']
         slack_channel = event.get('channel')
         message_ts = event.get('ts')
+        thread_ts = event.get('thread_ts')  # Get existing thread if any
         
         # Enhanced user identification
         user_email, user_info = get_user_email(slack_user_id, client)
@@ -881,26 +918,55 @@ def handle_mention(event, say, client):
         print(f"Source:        {user_info['source']}")
         print(f"{'='*60}\n")
         
+        # Determine if we should use threading
+        channel_type = "channel"  # app_mention is always in a channel
+        use_thread = thread_manager.should_use_thread(channel_type, thread_ts)
+        
+        # Get or create thread for context
+        if use_thread:
+            thread_ts = thread_manager.get_or_create_thread(
+                thread_ts or message_ts,  # Use existing thread or start new
+                slack_user_id,
+                slack_channel,
+                channel_type
+            )
+            
+            # Add user message to thread history
+            thread_manager.add_user_message(thread_ts, text, slack_user_id)
+            
+            # Get conversation context
+            conversation_context = thread_manager.get_context_for_message(
+                text, thread_ts, slack_user_id, slack_channel, channel_type
+            )
+        else:
+            conversation_context = None
+        
         # Build Slack context
         slack_context = {
             "slack_user_id": slack_user_id,
             "slack_channel": slack_channel,
             "slack_message_ts": message_ts,
+            "slack_thread_ts": thread_ts,
             "event_type": "app_mention"
         }
         
-        # Query OMNI2 with Slack context
-        result = omni.ask(user_email, text, slack_context)
+        # Query OMNI2 with Slack context and conversation history
+        result = omni.ask(user_email, text, slack_context, conversation_context)
+        
+        # Add assistant response to thread history
+        if use_thread:
+            assistant_message = result.get('answer', 'Error processing request')
+            thread_manager.add_assistant_message(thread_ts, assistant_message)
         
         # Format and send response in thread
         formatted = format_response(result)
         say(
             **formatted,
-            thread_ts=event.get('ts')  # Reply in thread
+            thread_ts=thread_ts  # Reply in thread
         )
     
     except Exception as e:
-        say(f"❌ Error: {str(e)}", thread_ts=event.get('ts'))
+        say(f"❌ Error: {str(e)}", thread_ts=event.get('thread_ts', event.get('ts')))
 
 
 @app.event("message")
@@ -924,6 +990,7 @@ def handle_dm(event, say, client):
             slack_user_id = event['user']
             slack_channel = event.get('channel')
             message_ts = event.get('ts')
+            thread_ts = event.get('thread_ts')  # DMs can have threads too
             
             # Enhanced user identification
             user_email, user_info = get_user_email(slack_user_id, client)
@@ -938,20 +1005,42 @@ def handle_dm(event, say, client):
             print(f"Source:        {user_info['source']}")
             print(f"{'='*60}\n")
             
+            # Determine if we should use threading (DMs typically don't, but can be configured)
+            channel_type = "dm"
+            use_thread = thread_manager.should_use_thread(channel_type, thread_ts)
+            
+            # Get conversation context for DMs (even without threads, we track context)
+            conversation_context = thread_manager.get_context_for_message(
+                text, thread_ts, slack_user_id, slack_channel, channel_type
+            )
+            
+            # Add user message to history
+            if use_thread and thread_ts:
+                thread_manager.add_user_message(thread_ts, text, slack_user_id)
+            
             # Build Slack context
             slack_context = {
                 "slack_user_id": slack_user_id,
                 "slack_channel": slack_channel,
                 "slack_message_ts": message_ts,
+                "slack_thread_ts": thread_ts,
                 "event_type": "direct_message"
             }
             
-            # Query OMNI2 with Slack context
-            result = omni.ask(user_email, text, slack_context)
+            # Query OMNI2 with Slack context and conversation history
+            result = omni.ask(user_email, text, slack_context, conversation_context)
+            
+            # Add assistant response to history
+            if use_thread and thread_ts:
+                assistant_message = result.get('answer', 'Error processing request')
+                thread_manager.add_assistant_message(thread_ts, assistant_message)
             
             # Format and send response
             formatted = format_response(result)
-            say(**formatted)
+            response_kwargs = formatted
+            if thread_ts:
+                response_kwargs['thread_ts'] = thread_ts
+            say(**response_kwargs)
         
         except Exception as e:
             say(f"❌ Error: {str(e)}")

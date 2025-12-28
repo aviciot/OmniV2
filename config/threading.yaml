@@ -1,0 +1,61 @@
+# ============================================================
+# OMNI2 Slack Threading Configuration
+# ============================================================
+# Configure how conversations are organized in Slack threads
+
+threading:
+  # Enable threading (keep conversations organized in threads)
+  enabled: true
+  
+  # Thread behavior
+  behavior:
+    # Always reply in threads (even if user messages in channel)
+    always_use_threads: true
+    
+    # Continue existing threads (reply in thread if user is in thread)
+    continue_threads: true
+    
+    # Start new thread for each new conversation
+    new_thread_per_conversation: true
+  
+  # Context management
+  context:
+    # Enable conversation context (remember previous messages in thread)
+    enabled: true
+    
+    # Maximum messages to include as context (0 = disabled, 1-10 = last N messages)
+    max_messages: 3
+    
+    # Include context in API calls to LLM
+    send_to_llm: true
+    
+    # Context format for LLM
+    format: "Previous conversation:\n{context}\n\nCurrent question: {message}"
+  
+  # Thread metadata
+  metadata:
+    # Track thread creation time
+    track_created_at: true
+    
+    # Track user who started thread
+    track_starter_user: true
+    
+    # Store in memory (for current session only)
+    storage: "memory"  # Options: memory, database (future)
+
+# DM (Direct Message) behavior
+direct_messages:
+  # Use threading in DMs (less useful, usually disabled)
+  use_threads: false
+  
+  # Keep context in DMs even without threads
+  context:
+    enabled: true
+    max_messages: 5
+
+# Channel-specific overrides (optional)
+channel_overrides:
+  # Example: Disable threading in specific channels
+  # "C12345678":  # Channel ID
+  #   threading_enabled: false
+  #   context_enabled: false
