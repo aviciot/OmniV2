@@ -406,6 +406,35 @@ User asks natural language question → LLM picks correct tool → Routes to rig
 → Returns formatted results
 ```
 
+**Response Format:**
+OMNI2 returns both human-readable answers and raw tool results:
+```json
+{
+  "success": true,
+  "answer": "The files are identical...",
+  "tool_results": [
+    {
+      "mcp": "qa_mcp",
+      "tool": "compare_csv_files",
+      "arguments": {"file1_path": "...", "file2_path": "..."},
+      "result": {
+        "success": true,
+        "report_path": "/app/data/snapshots/SMOKE_123/report.txt",
+        "statistics": {...}
+      }
+    }
+  ],
+  "tools_used": ["qa_mcp.compare_csv_files"],
+  "iterations": 2
+}
+```
+
+This design enables:
+- ✅ **LLM Response**: Human-readable answer from Claude
+- ✅ **Raw Tool Data**: Access to original tool results (file paths, statistics, etc.)
+- ✅ **Application Logic**: Slack bot can upload files, display charts, etc.
+- ✅ **Generic Design**: Works for ALL tools across ANY MCP server
+
 ### 3. Role-Based Access
 5 role types with granular permissions:
 - `admin` - Full access
@@ -984,6 +1013,15 @@ Internal project - Company proprietary
 - 🔜 Action buttons for tool results: "Show More", "Export CSV", "Run Analysis"
 - 🔜 Confirmation dialogs for destructive operations
 
+**QA_MCP Integration (December 29, 2025):**
+- ✅ CSV comparison with file size tracking (B/KB/MB)
+- ✅ ZIP extraction support (auto-extract CSVs from ZIP)
+- ✅ tool_results in API response (raw data for application logic)
+- ✅ Slack bot file upload (detailed reports as attachments)
+- ✅ Generic file comparison naming (future-ready for PDF, Excel)
+- ✅ Claude Sonnet 4.5 upgrade (better instruction following)
+- ✅ files:read + files:write Slack permissions
+
 **Advanced Slack Features** (Future):
 - 🔜 Slack Official MCP integration (bidirectional messaging)
 - 🔜 Modal dialogs for complex forms
@@ -1016,5 +1054,5 @@ Internal project - Company proprietary
 
 ---
 
-**Last Updated:** December 28, 2025
-**Current Status:** Phase 7 Complete (Threading & Context), Phase 8-9 Planned
+**Last Updated:** December 29, 2025
+**Current Status:** Phase 7 Complete (Threading, Context & QA_MCP Integration), Phase 8-9 Planned

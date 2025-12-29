@@ -153,6 +153,57 @@ mcps:
       burst: 5
   
   # ------------------------------
+  # QA MCP Server (CSV Comparison & Smoke Tests)
+  # ------------------------------
+  - name: qa_mcp
+    display_name: "QA Tools - CSV Comparison & Smoke Testing"
+    protocol: http
+    url: http://qa_mcp:9010/mcp  # Docker service name
+    enabled: true
+    timeout_seconds: 60
+    description: "CSV file comparison with smart ignore rules and StorageGrid smoke test workflows"
+    
+    # No authentication required (internal service)
+    authentication:
+      enabled: false
+    
+    # Tags for easier filtering
+    tags:
+      - qa
+      - testing
+      - csv
+      - comparison
+      - smoke-test
+      - storagegrid
+    
+    # Tool exposure policy
+    tool_policy:
+      mode: "allow_all"
+      # All QA tools are safe for general use
+    
+    # Role-based restrictions
+    role_restrictions:
+      read_only:
+        allow_only:
+          - "list_smoke_snapshots"
+          - "compare_csv_files"
+      
+      power_user:
+        allow_all_except:
+          - "delete_snapshot"  # Only admins can delete
+      
+      qa_tester:
+        allow_all: true
+      
+      admin:
+        allow_all: true
+    
+    # Rate limiting
+    rate_limit:
+      requests_per_minute: 30
+      burst: 10
+  
+  # ------------------------------
   # Example: Stdio-based MCP (e.g., local filesystem MCP)
   # ------------------------------
   - name: filesystem_mcp

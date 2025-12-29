@@ -40,10 +40,10 @@ services:
       # Claude 4.5: claude-sonnet-4-5-20250929, claude-opus-4-5-20251101, claude-haiku-4-5-20251001
       # Claude 4.0: claude-sonnet-4-20250514, claude-opus-4-20250514
       # Claude 3.7: claude-3-7-sonnet-20250219
-      # Claude 3.5: claude-3-5-haiku-20241022 (current - fast & cost-effective)
+      # Claude 3.5: claude-3-5-haiku-20241022 (fast & cost-effective)
       # Claude 3.0: claude-3-opus-20240229, claude-3-haiku-20240307
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - ANTHROPIC_MODEL=claude-3-5-haiku-20241022
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL}
       - ANTHROPIC_MAX_TOKENS=${ANTHROPIC_MAX_TOKENS}
       - ANTHROPIC_TIMEOUT=${ANTHROPIC_TIMEOUT}
       - ANTHROPIC_MAX_TOKENS=4096
@@ -164,12 +164,36 @@ services:
     volumes:
       - ./config:/app/config:ro  # Mount config directory for slack.yaml
       - ./slack_bot_omni.py:/app/slack_bot_omni.py  # Hot-reload for development
+      - ../QA_MCP/data/snapshots:/app/data/snapshots  # QA_MCP snapshots folder (shared with qa_mcp)
     networks:
       - omni2-network
     depends_on:
       - omni2
     restart: unless-stopped
     # Note: Slack bot uses Socket Mode (WebSocket), no ports needed
+
+  # ============================================================
+  # QA MCP Server (CSV Comparison & Smoke Testing)
+  # ============================================================
+  qa_mcp:
+    image: qa_mcp-qa_mcp:latest  # Use the image built from QA_MCP folder
+    container_name: omni2-qa-mcp
+    ports:
+      - "9010:9010"
+    environment:
+      - MCP_PORT=9010
+      - MCP_SERVER_NAME=QA_MCP_Server
+      - AUTO_DISCOVER=true
+    volumes:
+      - ../QA_MCP/data/snapshots:/app/data/snapshots  # QA_MCP snapshots folder
+    networks:
+      - omni2-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9010/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # ============================================================
   # Redis (Phase 7 - for caching and sessions)
@@ -203,6 +227,7 @@ networks:
 volumes:
   postgres-data:
     driver: local
+  # qa_snapshots - now using local folder mount instead of volume
   # redis-data:
   #   driver: local
 

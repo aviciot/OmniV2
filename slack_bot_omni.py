@@ -9,6 +9,7 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 import json
 import yaml
+import traceback
 from typing import Optional
 from pathlib import Path
 
@@ -396,6 +397,182 @@ def get_user_email(slack_user_id: str, client=None) -> tuple[str, dict]:
     return DEFAULT_USER, user_info
 
 
+# ============================================================================
+# FILE HANDLING
+# ============================================================================
+
+def download_slack_file(file_info: dict, client) -> Optional[dict]:
+    """
+    Download a file from Slack using the Slack SDK
+    Supports ZIP file extraction
+    
+    Args:
+        file_info: File info dict from Slack event
+        client: Slack WebClient instance
+        
+    Returns:
+        Dict with file_name and file_content, or None if failed
+        For ZIP files, returns list of extracted files
+    """
+    import time
+    import zipfile
+    import io
+    
+    try:
+        file_id = file_info.get('id')
+        file_name = file_info.get('name', 'unknown.csv')
+        is_zip = file_name.lower().endswith('.zip')
+        
+        print(f"📥 Downloading file: {file_name}")
+        print(f"   File ID: {file_id}")
+        
+        # Try to get download URL (with fallback for missing files:read scope)
+        url_private = None
+        
+        try:
+            # Try files.info API (requires files:read scope)
+            file_info_response = client.files_info(file=file_id)
+            
+            if file_info_response.get('ok'):
+                file_data = file_info_response.get('file', {})
+                url_private = file_data.get('url_private_download')
+                print(f"   ✅ Got URL from files.info API")
+            else:
+                error = file_info_response.get('error', 'unknown')
+                if error == 'missing_scope':
+                    print(f"   ⚠️  Missing files:read scope - falling back to event URL")
+                else:
+                    print(f"   ⚠️  files.info failed ({error}) - falling back to event URL")
+        except Exception as e:
+            print(f"   ⚠️  files.info error: {str(e)[:100]} - falling back to event URL")
+        
+        # Fallback: Use URL from event (available without files:read scope)
+        if not url_private:
+            url_private = file_info.get('url_private_download') or file_info.get('url_private')
+            if url_private:
+                print(f"   Using URL from event")
+            else:
+                print(f"❌ No download URL available")
+                return None
+        
+        # Download using requests with bot token
+        # Note: Slack requires the token in Authorization header
+        headers = {
+            "Authorization": f"Bearer {client.token}"
+        }
+        
+        print(f"   Downloading from: {url_private[:80]}...")
+        response = requests.get(url_private, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            # Validate content
+            content = response.content
+            
+            # Check if it's HTML (authentication failed)
+            if content.startswith(b'<!DOCTYPE html>') or content.startswith(b'<html'):
+                print(f"❌ Received HTML instead of file (auth may have failed)")
+                print(f"   Content-Type: {response.headers.get('Content-Type', 'unknown')}")
+                return None
+            
+            # Handle ZIP files - extract and return CSV files
+            if is_zip:
+                print(f"📦 ZIP file detected, extracting...")
+                try:
+                    with zipfile.ZipFile(io.BytesIO(content)) as zip_ref:
+                        csv_files_in_zip = [f for f in zip_ref.namelist() if f.lower().endswith('.csv')]
+                        
+                        if not csv_files_in_zip:
+                            print(f"⚠️  No CSV files found in ZIP")
+                            return None
+                        
+                        if len(csv_files_in_zip) > 2:
+                            print(f"⚠️  ZIP contains {len(csv_files_in_zip)} CSV files, using first 2")
+                            csv_files_in_zip = csv_files_in_zip[:2]
+                        
+                        extracted_files = []
+                        for csv_file_name in csv_files_in_zip:
+                            csv_content = zip_ref.read(csv_file_name)
+                            try:
+                                decoded_content = csv_content.decode('utf-8')
+                            except UnicodeDecodeError:
+                                decoded_content = csv_content.decode('latin-1')
+                            
+                            extracted_files.append({
+                                "file_name": os.path.basename(csv_file_name),
+                                "file_content": decoded_content,
+                                "file_size": len(csv_content)
+                            })
+                            print(f"   ✅ Extracted: {os.path.basename(csv_file_name)} ({len(csv_content)} bytes)")
+                        
+                        # Return special marker for ZIP with extracted files
+                        return {
+                            "is_zip": True,
+                            "zip_name": file_name,
+                            "extracted_files": extracted_files
+                        }
+                        
+                except zipfile.BadZipFile:
+                    print(f"❌ Invalid ZIP file")
+                    return None
+            
+            # Decode regular CSV content
+            try:
+                decoded_content = content.decode('utf-8')
+            except UnicodeDecodeError:
+                # Try other encodings
+                try:
+                    decoded_content = content.decode('latin-1')
+                    print(f"⚠️  File decoded using latin-1 encoding")
+                except:
+                    print(f"❌ Failed to decode file content")
+                    return None
+            
+            print(f"✅ Downloaded file: {file_name} ({len(content)} bytes)")
+            print(f"   Content-Type: {response.headers.get('Content-Type', 'unknown')}")
+            
+            return {
+                "file_name": file_name,
+                "file_content": decoded_content,
+                "file_size": len(content)
+            }
+        else:
+            print(f"❌ Download failed: HTTP {response.status_code}")
+            print(f"   Response: {response.text[:200]}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Error downloading file: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+        traceback.print_exc()
+        return None
+
+
+def detect_csv_files(event: dict) -> list:
+    """
+    Detect CSV and ZIP files attached to a Slack message
+    
+    Args:
+        event: Slack event dict
+        
+    Returns:
+        List of CSV/ZIP file info dicts
+    """
+    files = event.get('files', [])
+    csv_files = []
+    
+    for file_info in files:
+        file_name = file_info.get('name', '').lower()
+        mimetype = file_info.get('mimetype', '')
+        
+        # Check if it's a CSV or ZIP file
+        if file_name.endswith('.csv') or 'csv' in mimetype or file_name.endswith('.zip') or 'zip' in mimetype:
+            csv_files.append(file_info)
+    
+    return csv_files
+
+
 def format_response(result: dict, user_email: str = None, channel_type: str = "dm", include_feedback: bool = False) -> dict:
     """
     Format OMNI2 response into Slack blocks
@@ -533,7 +710,9 @@ def format_response(result: dict, user_email: str = None, channel_type: str = "d
             }
         })
     
-    return {"blocks": blocks}
+    # Add text fallback for accessibility
+    answer_text = result.get("answer", "") if result.get("success") else result.get("error", "Error")
+    return {"blocks": blocks, "text": answer_text[:3000]}  # Slack text limit
 
 
 # ============================================================================
@@ -918,6 +1097,141 @@ def handle_mention(event, say, client):
         print(f"Source:        {user_info['source']}")
         print(f"{'='*60}\n")
         
+        # Detect files for comparison (CSV, PDF, etc.)
+        comparison_files = detect_csv_files(event)  # TODO: Rename function to detect_comparison_files
+        comparison_keywords = ['csv', 'compare', 'comparison', 'file', 'diff', 'difference']
+        is_file_comparison_request = any(keyword in text.lower() for keyword in comparison_keywords)
+        
+        # Handle file comparison requests (CSV, PDF, etc.)
+        if comparison_files and is_file_comparison_request:
+            print(f"📎 Detected {len(comparison_files)} file(s) in message")
+            
+            # Validation 1: Must have exactly 2 files
+            if len(comparison_files) < 2:
+                say(
+                    text="📊 *CSV Comparison - Upload 2 Files*\n\n❌ I found only **1 CSV file**.\n\n*To compare CSV files:*\n1. Upload **2 different CSV files** in one message\n2. Mention me with: `@omni_bot compare these files`\n\n💡 Both files must be attached to the same message!",
+                    thread_ts=thread_ts or message_ts
+                )
+                return
+            
+            if len(comparison_files) > 2:
+                say(
+                    text=f"📊 *File Comparison - Multiple Files Detected*\n\n⚠️ I found **{len(comparison_files)} files**.\n\nI'll compare the first 2:\n• `{comparison_files[0]['name']}`\n• `{comparison_files[1]['name']}`\n\n💡 *Tip:* Upload only 2 files for clearer results.",
+                    thread_ts=thread_ts or message_ts
+                )
+            
+            # Download the first 2 CSV files (or ZIP)
+            say(text="⏳ Downloading files...", thread_ts=thread_ts or message_ts)
+            
+            import time
+            
+            # Download files (handles ZIP extraction)
+            downloaded_files = []
+            
+            file1 = download_slack_file(comparison_files[0], client)
+            if file1:
+                # Check if it's a ZIP with extracted files
+                if file1.get('is_zip'):
+                    say(text=f"📦 Extracted {len(file1['extracted_files'])} CSV files from {file1['zip_name']}", thread_ts=thread_ts or message_ts)
+                    downloaded_files.extend(file1['extracted_files'])
+                else:
+                    downloaded_files.append(file1)
+                time.sleep(0.5)
+            
+            # Only download second file if we don't have 2 files yet
+            if len(downloaded_files) < 2 and len(comparison_files) > 1:
+                file2 = download_slack_file(comparison_files[1], client)
+                if file2:
+                    if file2.get('is_zip'):
+                        say(text=f"📦 Extracted {len(file2['extracted_files'])} CSV files from {file2['zip_name']}", thread_ts=thread_ts or message_ts)
+                        downloaded_files.extend(file2['extracted_files'])
+                    else:
+                        downloaded_files.append(file2)
+            
+            # Validation: Need exactly 2 CSV files
+            if len(downloaded_files) < 2:
+                say(
+                    text=f"❌ *Not enough CSV files*\n\nFound {len(downloaded_files)} CSV file(s), need 2.\n\n*Solution:* Upload 2 CSV files or a ZIP containing 2 CSV files.",
+                    thread_ts=thread_ts or message_ts
+                )
+                return
+            
+            if len(downloaded_files) > 2:
+                say(
+                    text=f"⚠️ Found {len(downloaded_files)} CSV files, comparing first 2:\n• `{downloaded_files[0]['file_name']}`\n• `{downloaded_files[1]['file_name']}`",
+                    thread_ts=thread_ts or message_ts
+                )
+            
+            # Use first 2 files
+            file1 = downloaded_files[0]
+            file2 = downloaded_files[1]
+            
+            # Create snapshot folder with test ID
+            import os
+            from pathlib import Path
+            from datetime import datetime
+            import json
+            
+            # Generate test ID
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            test_id = f"SMOKE_{timestamp}"
+            
+            # Create snapshot directory structure (maps to QA_MCP/data/snapshots)
+            snapshots_base = Path("/app/data/snapshots")
+            test_folder = snapshots_base / test_id
+            test_folder.mkdir(parents=True, exist_ok=True)
+            
+            # Save files with descriptive names (preserve original extension)
+            file1_ext = Path(file1['file_name']).suffix
+            file2_ext = Path(file2['file_name']).suffix
+            
+            file1_name = f"file1{file1_ext}"
+            file2_name = f"file2{file2_ext}"
+            
+            path1 = test_folder / file1_name
+            path2 = test_folder / file2_name
+            
+            # Write CSV files to snapshot folder
+            with open(path1, 'w', encoding='utf-8') as f:
+                f.write(file1['file_content'])
+            with open(path2, 'w', encoding='utf-8') as f:
+                f.write(file2['file_content'])
+            
+            # Create metadata file
+            metadata = {
+                "test_id": test_id,
+                "timestamp": datetime.now().isoformat(),
+                "user": user_email,
+                "slack_user": user_info.get('slack_real_name', 'Unknown'),
+                "file1_original": file1['file_name'],
+                "file2_original": file2['file_name'],
+                "file1_size": file1['file_size'],
+                "file2_size": file2['file_size'],
+                "comparison_type": "smoke_test",
+                "slack_channel": slack_channel,
+                "slack_thread": thread_ts or message_ts
+            }
+            
+            metadata_path = test_folder / "metadata.json"
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2)
+            
+            # For QA_MCP, use paths from its perspective (/app/data/snapshots/<test_id>/)
+            qa_mcp_path1 = f"/app/data/snapshots/{test_id}/{file1_name}"
+            qa_mcp_path2 = f"/app/data/snapshots/{test_id}/{file2_name}"
+            
+            # Enhance user message with test ID and file info (keep it concise for DB audit log)
+            enhanced_text = f"Compare CSV files from test {test_id}: {qa_mcp_path1} vs {qa_mcp_path2}"
+            
+            print(f"📊 Test ID: {test_id}")
+            print(f"📊 Comparing: {file1['file_name']} vs {file2['file_name']}")
+            print(f"📁 Snapshot folder: {test_folder}")
+            print(f"📝 Metadata saved: {metadata_path}")
+            print(f"📝 QA_MCP paths: {qa_mcp_path1} and {qa_mcp_path2}")
+            print(f"📝 Enhanced query: {enhanced_text}")
+        else:
+            enhanced_text = text
+        
         # Determine if we should use threading
         channel_type = "channel"  # app_mention is always in a channel
         use_thread = thread_manager.should_use_thread(channel_type, thread_ts)
@@ -926,24 +1240,31 @@ def handle_mention(event, say, client):
         
         # Get or create thread for context
         if use_thread:
-            thread_ts = thread_manager.get_or_create_thread(
-                thread_ts or message_ts,  # Use existing thread or start new
-                slack_user_id,
+            # Ensure thread_ts is set (use message_ts if starting new thread)
+            if not thread_ts:
+                thread_ts = message_ts
+            
+            # Create thread context in manager
+            thread_manager.get_or_create_thread(
+                thread_ts,
                 slack_channel,
-                channel_type
+                slack_user_id
             )
             
             print(f"🧵 Thread TS: {thread_ts}")
             
-            # Add user message to thread history
-            thread_manager.add_user_message(thread_ts, text, slack_user_id)
+            # Add user message to thread history (use original text, not enhanced)
+            thread_manager.add_user_message(thread_ts, slack_channel, slack_user_id, text, message_ts)
             
             # Get conversation context
             conversation_context = thread_manager.get_context_for_message(
                 text, thread_ts, slack_user_id, slack_channel, channel_type
             )
             
-            print(f"🧵 Context Generated: {len(conversation_context) if conversation_context else 0} chars")
+            # Count messages in thread
+            thread = thread_manager._threads.get(thread_ts)
+            msg_count = len(thread.messages) if thread else 0
+            print(f"🧵 Context: {len(conversation_context) if conversation_context else 0} chars, {msg_count} messages in thread")
         else:
             conversation_context = None
             print(f"🧵 Threading disabled, no context")
@@ -957,23 +1278,76 @@ def handle_mention(event, say, client):
             "event_type": "app_mention"
         }
         
-        # Query OMNI2 with Slack context and conversation history
-        result = omni.ask(user_email, text, slack_context, conversation_context)
+        # Query OMNI2 with Slack context and conversation history (use enhanced_text for CSV files)
+        result = omni.ask(user_email, enhanced_text, slack_context, conversation_context)
+        
+        # Cleanup: Remove snapshot folder after processing (optional - keep for historical analysis)
+        # Note: We're keeping snapshots for now to enable historical analysis
+        # Auto-cleanup will be handled by a separate background job based on retention policy
+        if comparison_files and is_file_comparison_request and 'test_id' in locals():
+            print(f"📦 Snapshot preserved: {test_id} (for historical analysis)")
+            # Uncomment below to enable immediate cleanup:
+            # try:
+            #     import shutil
+            #     if test_folder.exists():
+            #         shutil.rmtree(test_folder)
+            #     print(f"🧹 Cleaned up snapshot folder: {test_id}")
+            # except Exception as cleanup_error:
+            #     print(f"⚠️  Failed to cleanup snapshot folder: {cleanup_error}")
         
         print(f"🧵 OMNI2 Response received, success={result.get('success', False)}")
         
-        # Add assistant response to thread history
-        if use_thread:
-            assistant_message = result.get('answer', 'Error processing request')
-            thread_manager.add_assistant_message(thread_ts, assistant_message)
-            print(f"🧵 Added assistant response to thread history")
-        
         # Format and send response in thread
         formatted = format_response(result)
-        say(
+        response = say(
             **formatted,
             thread_ts=thread_ts  # Reply in thread
         )
+        
+        # Upload detailed report file if available (for file comparisons)
+        if result.get('success') and comparison_files and is_file_comparison_request:
+            print(f"🔍 Checking for report file...")
+            print(f"   Result keys: {result.keys()}")
+            
+            # Check if there's a report_path in the tool results
+            tool_results = result.get('tool_results', [])
+            print(f"   Tool results count: {len(tool_results)}")
+            
+            for tool_result in tool_results:
+                print(f"   Tool: {tool_result.get('tool')}")
+                
+                # Get the actual result data from the tool
+                result_data = tool_result.get('result', {})
+                print(f"   Result data keys: {result_data.keys() if isinstance(result_data, dict) else type(result_data)}")
+                
+                if isinstance(result_data, dict) and 'report_path' in result_data:
+                    report_path = result_data['report_path']
+                    print(f"   Found report_path: {report_path}")
+                    if os.path.exists(report_path):
+                        try:
+                            # Upload the report file to Slack
+                            client.files_upload_v2(
+                                channel=slack_channel,
+                                file=report_path,
+                                title="CSV Comparison Detailed Report",
+                                initial_comment="📊 Detailed comparison report attached",
+                                thread_ts=thread_ts
+                            )
+                            print(f"📤 Uploaded detailed report: {report_path}")
+                        except Exception as upload_error:
+                            print(f"⚠️  Failed to upload report file: {upload_error}")
+                            import traceback
+                            traceback.print_exc()
+                    else:
+                        print(f"⚠️  Report file not found: {report_path}")
+                    break
+        
+        # Add assistant response to thread history
+        if use_thread and response:
+            assistant_message = result.get('answer', 'Error processing request')
+            response_ts = response.get('ts', response.get('message', {}).get('ts'))
+            thread_manager.add_assistant_message(thread_ts, slack_channel, slack_user_id, assistant_message, response_ts)
+            print(f"🧵 Added assistant response to thread history")
     
     except Exception as e:
         say(f"❌ Error: {str(e)}", thread_ts=event.get('thread_ts', event.get('ts')))
@@ -1026,7 +1400,7 @@ def handle_dm(event, say, client):
             
             # Add user message to history
             if use_thread and thread_ts:
-                thread_manager.add_user_message(thread_ts, text, slack_user_id)
+                thread_manager.add_user_message(thread_ts, slack_channel, slack_user_id, text, message_ts)
             
             # Build Slack context
             slack_context = {
@@ -1040,19 +1414,22 @@ def handle_dm(event, say, client):
             # Query OMNI2 with Slack context and conversation history
             result = omni.ask(user_email, text, slack_context, conversation_context)
             
-            # Add assistant response to history
-            if use_thread and thread_ts:
-                assistant_message = result.get('answer', 'Error processing request')
-                thread_manager.add_assistant_message(thread_ts, assistant_message)
-            
             # Format and send response
             formatted = format_response(result)
             response_kwargs = formatted
             if thread_ts:
                 response_kwargs['thread_ts'] = thread_ts
-            say(**response_kwargs)
+            response = say(**response_kwargs)
+            
+            # Add assistant response to history
+            if use_thread and thread_ts and response:
+                assistant_message = result.get('answer', 'Error processing request')
+                response_ts = response.get('ts', response.get('message', {}).get('ts'))
+                thread_manager.add_assistant_message(thread_ts, slack_channel, slack_user_id, assistant_message, response_ts)
         
         except Exception as e:
+            error_details = traceback.format_exc()
+            print(f"❌ ERROR in app_mention handler:\n{error_details}")
             say(f"❌ Error: {str(e)}")
 
 

@@ -71,8 +71,8 @@ class AuditService:
                 tool.split(".")[0] for tool in tools_used if "." in tool
             ]))
             
-            # Create message preview (first 200 chars)
-            message_preview = message[:200] + "..." if len(message) > 200 else message
+            # Create message preview (first 197 chars + "..." = 200 total)
+            message_preview = message[:197] + "..." if len(message) > 197 else message
             
             # Create response preview (first 500 chars)
             response_preview = answer[:500] + "..." if len(answer) > 500 else answer
@@ -215,7 +215,8 @@ class AuditService:
             Audit log ID
         """
         try:
-            message_preview = message[:200] + "..." if len(message) > 200 else message
+            # Create message preview (first 197 chars + "..." = 200 total)
+            message_preview = message[:197] + "..." if len(message) > 197 else message
             
             # Check if database is initialized
             engine = self._get_engine()

@@ -158,6 +158,7 @@ RULES:
 3. If the question is outside your scope → Politely explain what you CAN help with
 4. Always be helpful, accurate, and concise
 5. If a tool fails, explain the error and suggest alternatives
+6. When a tool returns pre-formatted output (with boxes, tables, or structured layout), present it exactly as-is using code blocks
 
 SLACK FORMATTING (when user context includes slack_context):
 - Use *bold* for emphasis, not **double**
@@ -170,6 +171,7 @@ SLACK FORMATTING (when user context includes slack_context):
 - Start with TL;DR for long responses
 - Use "→" for showing cause/effect
 - NO markdown headers (#), use *Section Name* instead
+- For pre-formatted tool output: Wrap in ```code blocks``` to preserve formatting
 
 Example Good Slack Format:
 *Database Health: transformer_master*
@@ -287,6 +289,9 @@ When calling tools, use the exact tool name and provide all required arguments.
         # Use prompt caching for Anthropic to save costs on repeated system prompts
         system_messages = [{"role": "user", "content": message}]
         
+        # Track all tool results across iterations
+        all_tool_results = []
+        
         if self.use_prompt_caching:
             # Anthropic prompt caching: mark system prompt as cacheable
             # This saves ~90% on input tokens for iterations 2+ (cached for 5 min)
@@ -361,6 +366,7 @@ When calling tools, use the exact tool name and provide all required arguments.
                         "answer": final_answer,
                         "tool_calls": total_tool_calls,
                         "tools_used": all_tools_used,
+                        "tool_results": all_tool_results,  # Add raw tool results
                         "iterations": iteration_count,
                         "tokens_input": total_input_tokens,
                         "tokens_output": total_output_tokens,
@@ -386,6 +392,14 @@ When calling tools, use the exact tool name and provide all required arguments.
                             tool_name=tool_name,
                             arguments=tool_use.input,
                         )
+                        
+                        # Store the actual tool result data
+                        all_tool_results.append({
+                            "mcp": mcp_name,
+                            "tool": tool_name,
+                            "arguments": tool_use.input,
+                            "result": tool_result,  # Raw result from tool
+                        })
                         
                         tool_results.append({
                             "type": "tool_result",
