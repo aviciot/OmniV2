@@ -8,62 +8,46 @@
 
 ---
 
+## 💡 Why OMNI2?
+
+**The Problem:**
+Your team uses multiple specialized tools (Database analyzers, GitHub, Analytics, QA tools). Each tool is powerful but isolated. Users need to:
+- Remember multiple interfaces and commands
+- Switch between tools manually
+- Manage separate authentication for each tool
+- Lack visibility into who uses what and when
+
+**The Solution:**
+OMNI2 is a **centralized orchestration bridge** that unifies all your MCP servers behind a single natural language interface. Ask questions in Slack—OMNI2 intelligently routes to the right tool, enforces security, and tracks everything.
+
+**Why It Matters:**
+- **One Interface** - Natural language in Slack instead of learning each tool
+- **Centralized Security** - Role-based permissions and rate limits in one place
+- **Full Visibility** - Audit logs show exactly who accessed what and when
+- **Cost Control** - Track usage and prevent abuse with rate limiting
+- **Easy Integration** - Connect new MCP servers instantly via YAML config
+
+---
+
 ## 🎯 What It Does
 
-OMNI2 is an **LLM-powered orchestration layer** that connects your team to multiple MCP (Model Context Protocol) servers through Slack. It intelligently routes requests, enforces permissions, and tracks usage.
+OMNI2 is an **LLM-powered orchestration layer** that connects your team to multiple MCP (Model Context Protocol) servers through Slack. Claude AI interprets natural language queries, routes to appropriate tools, and returns unified responses.
 
-**Key Features:**
-- 🤖 **Multi-MCP Orchestration** - Connect to unlimited MCP servers
-- 🔐 **Role-Based Access Control** - Tool-level permissions with wildcard patterns
-- 🚦 **Rate Limiting** - Sliding window limits per user/role (20-200 req/hr)
-- 📊 **Comprehensive Audit Logging** - Track every query, cost, and tool usage
+**Core Capabilities:**
+- 🤖 **Smart Routing** - Understands intent and calls the right MCP tools
+- 🔐 **Role-Based Access** - Tool-level permissions with wildcard patterns
+- 🚦 **Rate Limiting** - Sliding window limits (20-200 req/hr by role)
+- 📊 **Audit Logging** - Track every query, cost, and tool usage to PostgreSQL
 - 💬 **Slack Integration** - Natural language interface with interactive buttons
-- 📈 **Analytics MCP** - Built-in usage analytics and cost tracking
-- 🎨 **Interactive Help** - `/omni-help` with MCP exploration buttons
-- 🔧 **Hot-Reload Development** - Fast iteration without rebuilds
+- 📈 **Built-in Analytics** - Usage stats, cost tracking, and health monitoring
+- 🎨 **Interactive Help** - `/omni-help` command with MCP exploration
+- 🔧 **Hot-Reload Dev** - Fast iteration without container rebuilds
 
 ---
 
 ## 🏗️ Architecture
 
-```
-┌─────────────┐
-│   Slack     │
-│   Users     │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────────────────────┐
-│     OMNI2 Slack Bot             │
-│  (slack_bot_omni.py)            │
-│  - Commands (/omni-help)        │
-│  - Message handling             │
-│  - Interactive buttons          │
-└──────────┬──────────────────────┘
-           │
-           ▼
-┌────────────────────────────────────┐
-│     OMNI2 Bridge (FastAPI)         │
-│  - LLM Service (Claude)            │
-│  - MCP Client (orchestration)      │
-│  - User Service (permissions)      │
-│  - Rate Limiter (abuse prevention) │
-│  - Audit Service (logging)         │
-└──────────┬──────────────┬──────────┘
-           │              │
-           ▼              ▼
-┌──────────────┐   ┌──────────────┐
-│  PostgreSQL  │   │   Multiple   │
-│  (audit_logs)│   │  MCP Servers │
-└──────────────┘   └──────┬───────┘
-                           │
-       ┌───────────────────┼───────────────────┐
-       ▼                   ▼                   ▼
-┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│ database_mcp │   │  github_mcp  │   │ analytics_mcp│
-│ (8 tools)    │   │  (2 tools)   │   │ (9 tools)    │
-└──────────────┘   └──────────────┘   └──────────────┘
-```
+![OMNI2 Architecture](./architecture.png)
 
 ---
 
@@ -127,62 +111,44 @@ What are my most expensive queries this week?
 
 ## 🔐 Permission System
 
-### Two-Tier Architecture
+**Two-Tier Control** - Role defaults + per-user overrides
 
-**1. MCP-Level Access** (`config/mcps.yaml`)
-- Defines which roles can access which MCPs
-- Global tool restrictions
-- Admin-only tools
+### How It Works
+1. **MCP-Level** (`mcps.yaml`) - Defines role defaults and global restrictions
+2. **User-Level** (`users.yaml`) - Per-user overrides with wildcard support (`get_*`, `analyze_*`)
+3. **Modes** - `inherit` (use role defaults), `custom` (specific tools), or `all` (full access)
 
-**2. User-Level Overrides** (`config/users.yaml`)
-- Per-user custom tool lists
-- Wildcard pattern support (`get_*`, `analyze_*`)
-- Mode: `inherit`, `custom`, or `all`
+### Examples
 
-### Example Configurations
-
-**Junior DBA (Limited Access):**
+**Junior DBA (Read-Only):**
 ```yaml
-- email: "junior.dba@company.com"
-  role: "junior_dba"
-  allowed_mcps:
-    database_mcp:
-      mode: "custom"
-      tools:
-        - "get_*"              # All get operations
-        - "list_*"             # All list operations
-        - "analyze_*_query"    # Query analysis only
-      # Blocked: compare_*_query_plans (too expensive)
+allowed_mcps:
+  database_mcp:
+    mode: "custom"
+    tools: ["get_*", "list_*", "analyze_*_query"]
+    # Blocked: compare_*_query_plans (too expensive)
 ```
 
-**Senior Developer (Full Access):**
+**Senior Dev (Full Access):**
 ```yaml
-- email: "senior.dev@company.com"
-  role: "senior_dev"
-  allowed_mcps:
-    database_mcp:
-      mode: "inherit"  # Gets all tools from role defaults
+allowed_mcps:
+  database_mcp:
+    mode: "inherit"  # Gets all role defaults
 ```
 
-**Contractor (Minimal Access):**
+**Contractor (Analytics Only):**
 ```yaml
-- email: "contractor@external.com"
-  role: "contractor"
-  allowed_mcps:
-    database_mcp:
-      mode: "custom"
-      tools:
-        - "list_available_databases"
-        - "get_database_health"
-    analytics_mcp:
-      mode: "custom"
-      tools: []  # Completely blocked
+allowed_mcps:
+  analytics_mcp:
+    mode: "custom"
+    tools: ["get_cost_summary", "get_active_users"]
+    # Blocked: Everything else
 ```
 
-### Wildcard Patterns
-- `get_*` - Matches `get_database_health`, `get_top_queries`, etc.
-- `analyze_*_query` - Matches `analyze_oracle_query`, `analyze_mysql_query`
-- `*` - Matches all tools (admin access)
+**Wildcard Patterns:**
+- `get_*` → Matches `get_database_health`, `get_top_queries`, etc.
+- `analyze_*_query` → Matches `analyze_oracle_query`, `analyze_mysql_query`
+- `*` → All tools (admin/super_admin only)
 
 ---
 
@@ -190,63 +156,45 @@ What are my most expensive queries this week?
 
 **Sliding Window Algorithm** - Prevents abuse with role-based hourly limits
 
-### Default Limits
-| Role | Requests/Hour | Use Case |
-|------|---------------|----------|
-| `admin` | Unlimited | System administrators |
-| `super_admin` | Unlimited | Owners |
-| `dba` | 200 | Database administrators |
+| Role | Requests/Hour | Typical Use |
+|------|---------------|-------------|
+| `super_admin` / `admin` | ∞ | System owners |
+| `dba` | 200 | Database admins |
 | `senior_dev` | 150 | Senior developers |
 | `power_user` | 100 | Regular developers |
 | `junior_dba` | 50 | Junior staff |
-| `contractor` | 20 | External contractors |
-| `read_only` | 30 | Analysts, viewers |
-
-### How It Works
-1. Request arrives at `/chat/ask`
-2. User role looked up from `users.yaml`
-3. Rate limiter checks request count in last hour
-4. If limit exceeded:
-   - Returns HTTP 429
-   - Logs violation to `audit_logs`
-   - Shows reset time to user
+| `read_only` | 30 | Analysts |
+| `contractor` | 20 | External users |
 
 **Example Error:**
 ```
-🚫 Rate limit exceeded. You've made 20/20 requests in the last hour. 
-Please try again in 47 minutes.
+🚫 Rate limit exceeded. 20/20 requests used.
+Try again in 47 minutes.
 ```
 
 ---
 
 ## 📊 Audit Logging
 
-**All requests logged to PostgreSQL** with comprehensive details
+**PostgreSQL audit trail** for compliance and cost tracking
 
 ### What's Logged
-- User ID, message, timestamp
-- Tools called and MCPs accessed
-- Request duration (ms)
-- Cost estimate (USD)
-- Status (success/error/warning)
-- Slack context (user_id, channel, thread)
-- IP address, user agent
+- User, message, timestamp, request duration, cost estimate (USD)
+- Tools called, MCPs accessed, status (success/error/warning)
+- Slack context (user_id, channel, thread), IP address
 
-### Query Audit Logs
+### Query Logs
 
-**API Endpoints:**
+**API:**
 ```bash
-# Your recent logs
 GET /audit/logs?requesting_user=<email>&limit=50&days=7
-
-# Your statistics
 GET /audit/stats?requesting_user=<email>&days=30
 ```
 
-**Natural Language:**
+**Slack:**
 ```
-Show me my queries from today and how much they cost
-What are the most expensive queries across all users this month?
+Show my queries from today and their costs
+Most expensive queries this month across all users
 ```
 
 ---
@@ -254,23 +202,17 @@ What are the most expensive queries across all users this month?
 ## 💬 Slack Commands
 
 ### `/omni-help`
-Interactive help menu with MCP exploration
+Interactive menu showing available MCPs and tools filtered by role
 
-**Features:**
-- Shows all MCPs user can access
-- Click buttons to explore tools
-- Filtered by user role
-- Persistent menu (doesn't disappear after clicks)
-
-**Example Response:**
+**Example:**
 ```
-🤖 OMNI2 Help - Available MCPs
+🤖 OMNI2 Help - Your Available MCPs
 
-Click to explore tools:
-[📊 Database Performance] [🐙 GitHub] [📈 Analytics]
+[📊 Database] [🐙 GitHub] [📈 Analytics]
 
-Database Performance Analyzer
-Multi-database performance monitoring (Oracle, MySQL)
+📊 Database Performance Analyzer
+Multi-database monitoring (Oracle, MySQL)
+Tools: list_databases, get_health, analyze_query...
 ```
 
 ---
@@ -278,57 +220,35 @@ Multi-database performance monitoring (Oracle, MySQL)
 ## 🛠️ Available MCPs
 
 ### 1. Database MCP (8 tools)
-**Oracle & MySQL performance analysis**
+**Oracle & MySQL performance monitoring**
 
-**Tools:**
 - `list_available_databases` - Show configured databases
 - `get_database_health` - CPU, sessions, cache hit ratios
 - `get_top_queries` - Top queries by CPU/time/executions
 - `get_performance_trends` - Historical performance charts
-- `analyze_oracle_query` - Oracle execution plan analysis
-- `analyze_mysql_query` - MySQL EXPLAIN JSON analysis
-- `compare_oracle_query_plans` - Side-by-side plan comparison
-- `compare_mysql_query_plans` - MySQL plan comparison
+- `analyze_oracle_query` / `analyze_mysql_query` - Execution plan analysis
+- `compare_*_query_plans` - Side-by-side plan comparison
 
-**Example:**
-```
-Check health on transformer_master
-Analyze this query on way4_docker8:
-SELECT * FROM ows.merchant_statement WHERE contract_id = 12313
-```
+**Example:** `Check health on transformer_master` or `Analyze this query on way4_docker8: SELECT...`
 
 ### 2. GitHub MCP (2 tools)
 **Repository search and file access**
 
-**Tools:**
-- `search_repositories` - Find repos by name/topic/language
-- `get_file_contents` - Read file contents from repos
+- `search_repositories` - Find repos by name/topic/language/stars
+- `get_file_contents` - Read files from any public repo
 
-**Example:**
-```
-Search for React repos with over 1000 stars
-Show me the README from facebook/react
-```
+**Example:** `Search React repos with 1000+ stars` or `Show README from facebook/react`
 
 ### 3. Analytics MCP (9 tools)
-**OMNI2 usage analytics and cost tracking**
+**Usage analytics and cost tracking**
 
-**Tools:**
 - `get_cost_summary` - Total costs by period/user
-- `get_top_expensive_queries` - Most expensive queries
-- `get_slow_queries` - Slowest queries
-- `get_iteration_analysis` - Queries with high iteration counts
-- `get_error_summary` - Error rates by MCP/tool
-- `get_failed_queries` - Recent failures with details
-- `get_active_users` - User activity and query counts
-- `get_tool_popularity` - Most used tools
-- `get_mcp_health_summary` - MCP server health
+- `get_top_expensive_queries` / `get_slow_queries` - Performance insights
+- `get_error_summary` / `get_failed_queries` - Error tracking
+- `get_active_users` / `get_tool_popularity` - Activity metrics
+- `get_mcp_health_summary` - Server health monitoring
 
-**Example:**
-```
-Show me the cost summary for the last month
-What are the top 10 most expensive queries this week?
-```
+**Example:** `Cost summary for last month` or `Top 10 most expensive queries this week`
 
 ---
 
