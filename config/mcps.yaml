@@ -158,7 +158,7 @@ mcps:
   - name: qa_mcp
     display_name: "QA Tools - CSV Comparison & Smoke Testing"
     protocol: http
-    url: http://qa_mcp:9010/mcp  # Docker service name
+    url: http://omni2-qa-mcp:9010/mcp  # Docker container name
     enabled: true
     timeout_seconds: 60
     description: "CSV file comparison with smart ignore rules and StorageGrid smoke test workflows"
