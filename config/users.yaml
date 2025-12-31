@@ -19,13 +19,13 @@ default_user:
 
 # Super admins
 super_admins:
-  - email: "avicoiot@gmail.com"
-    name: "Avi Cohen"
+  - email: "osnat.shilov@shift4.com"
+    name: "Osnat Shilov"
     role: "admin"
     allowed_mcps: "*"  # All MCPs
     allowed_domains: "*"  # All domains
     slack_user_id: null
-    description: "System owner and primary administrator"
+    description: "Shift4 administrator"
   
   - email: "avi.cohen@shift4.com"
     name: "Avi Cohen (Shift4)"
@@ -33,7 +33,7 @@ super_admins:
     allowed_mcps: "*"  # All MCPs
     allowed_domains: "*"  # All domains
     slack_user_id: "U066ZT4KS1W"  # 🔧 Added Slack user ID
-    description: "Shift4 administrator"
+    description: "System owner and primary administrator"
 
 # Predefined users
 users:
@@ -55,20 +55,18 @@ users:
     allowed_databases: ["*"]  # All databases
     
   # Developers - Power Users
-  - email: "developer@shift44.com"
+  - email: "alona.babich@shift4.com"
     name: "Developer"
     role: "power_user"
-    allowed_mcps:
-      - github_mcp
-      - database_mcp
+    allowed_mcps: "*"
     allowed_domains:
       - python_help
       - code_review
       - database_help
       - general_knowledge
     slack_user_id: null
-    teams: ["development", "backend"]
-    allowed_databases: ["transformer_master", "mysql_devdb03_avi"]
+    teams: ["development", "info"]
+    allowed_databases: ["transformer_master", "mysql_devdb03_avi","way4_docker7"]
   
   # QA Team - Testing + Read
   - email: "qa@shift44.com"

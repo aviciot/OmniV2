@@ -5,9 +5,14 @@ Handles communication with MCP servers using multiple protocols:
 - HTTP: FastMCP servers with HTTP transport
 - Stdio: Local MCP servers via subprocess
 - SSE: FastMCP servers with SSE transport
+
+Features:
+- Auto-reconnect on connection failures
+- Configurable retry per MCP
+- Connection age validation
 """
 
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Tuple
 from datetime import datetime
 import asyncio
 import fnmatch
@@ -17,6 +22,12 @@ from fastmcp.client.transports import StdioTransport
 
 from app.config import settings
 from app.utils.logger import logger
+
+
+# Default retry settings (fallback if not configured)
+DEFAULT_MAX_ATTEMPTS = 2
+DEFAULT_DELAY_SECONDS = 1.0
+DEFAULT_CONNECTION_MAX_AGE = 600  # 10 minutes
 
 
 class MCPClient:
@@ -33,10 +44,108 @@ class MCPClient:
             for server in settings.mcps.mcps
         }
         self._client_cache: Dict[str, Client] = {}
+        self._client_created_at: Dict[str, float] = {}  # Track connection age
         
         # Tool schema cache
         self._tool_cache: Dict[str, Dict[str, Any]] = {}
         self._tool_cache_timestamp: Dict[str, float] = {}
+        
+        # Load global retry settings
+        self._global_retry = settings.mcps.global_settings.get("retry", {})
+    
+    def _get_retry_config(self, server_name: str) -> Tuple[int, float, int]:
+        """
+        Get retry configuration for a server (MCP-specific or global fallback).
+        
+        Returns:
+            Tuple of (max_attempts, delay_seconds, connection_max_age_seconds)
+        """
+        server_config = self.servers.get(server_name, {})
+        mcp_retry = server_config.get("retry", {}) or {}
+        
+        max_attempts = (
+            mcp_retry.get("max_attempts") or 
+            self._global_retry.get("max_attempts") or 
+            DEFAULT_MAX_ATTEMPTS
+        )
+        delay_seconds = (
+            mcp_retry.get("delay_seconds") or 
+            self._global_retry.get("delay_seconds") or 
+            DEFAULT_DELAY_SECONDS
+        )
+        connection_max_age = (
+            mcp_retry.get("connection_max_age_seconds") or 
+            self._global_retry.get("connection_max_age_seconds") or 
+            DEFAULT_CONNECTION_MAX_AGE
+        )
+        
+        return max_attempts, delay_seconds, connection_max_age
+    
+    def _is_connection_error(self, error: Exception) -> bool:
+        """
+        Check if an error is a connection-related error (worth retrying).
+        
+        Args:
+            error: The exception to check
+            
+        Returns:
+            True if this is a connection error, False otherwise
+        """
+        connection_error_types = (
+            ConnectionError,
+            ConnectionRefusedError,
+            ConnectionResetError,
+            TimeoutError,
+            OSError,
+        )
+        
+        # Check exception type
+        if isinstance(error, connection_error_types):
+            return True
+        
+        # Check error message for common connection issues
+        error_msg = str(error).lower()
+        connection_keywords = [
+            "connection refused",
+            "connection reset",
+            "connection closed",
+            "connect timeout",
+            "timed out",
+            "network unreachable",
+            "host unreachable",
+            "no route to host",
+            "broken pipe",
+            "eof",
+            "stream",
+            "transport",
+        ]
+        
+        return any(keyword in error_msg for keyword in connection_keywords)
+    
+    async def _invalidate_client(self, server_name: str):
+        """
+        Safely close and remove a client from cache.
+        
+        Args:
+            server_name: Name of the server to invalidate
+        """
+        if server_name in self._client_cache:
+            try:
+                client = self._client_cache[server_name]
+                await client.__aexit__(None, None, None)
+            except Exception as e:
+                logger.warning(
+                    "⚠️ Error closing stale connection",
+                    server=server_name,
+                    error=str(e),
+                )
+            finally:
+                self._client_cache.pop(server_name, None)
+                self._client_created_at.pop(server_name, None)
+                logger.info(
+                    "🗑️ Invalidated client connection",
+                    server=server_name,
+                )
         
     async def _get_client(self, server_name: str) -> Client:
         """
@@ -53,8 +162,22 @@ class MCPClient:
         Returns:
             FastMCP Client instance
         """
+        # Check if cached client exists and is not too old
         if server_name in self._client_cache:
-            return self._client_cache[server_name]
+            _, _, max_age = self._get_retry_config(server_name)
+            created_at = self._client_created_at.get(server_name, 0)
+            age = time.time() - created_at
+            
+            if age > max_age:
+                logger.info(
+                    "🔄 Connection too old, refreshing",
+                    server=server_name,
+                    age_seconds=round(age, 1),
+                    max_age_seconds=max_age,
+                )
+                await self._invalidate_client(server_name)
+            else:
+                return self._client_cache[server_name]
         
         server_config = self.servers.get(server_name)
         if not server_config:
@@ -83,6 +206,7 @@ class MCPClient:
                 raise ValueError(f"Unsupported protocol: {protocol}")
             
             self._client_cache[server_name] = client
+            self._client_created_at[server_name] = time.time()  # Track creation time
             
             logger.info(
                 "✅ MCP client connected",
@@ -332,6 +456,8 @@ class MCPClient:
         """
         Fetch tools from FastMCP server using native MCP protocol with caching.
         
+        Includes automatic retry with reconnection on connection failures.
+        
         Args:
             server_name: Name of the MCP server
             use_cache: Whether to use cached tools (default: True)
@@ -351,67 +477,97 @@ class MCPClient:
                 return self._tool_cache[server_name]
         
         logger.info(
-            "� Fetching fresh tools from FastMCP server",
+            "🔍 Fetching fresh tools from FastMCP server",
             server=server_name,
         )
         
-        try:
-            client = await self._get_client(server_name)
-            
-            # Use native FastMCP list_tools method
-            tools_result = await client.list_tools()
-            
-            # tools_result is either a list of tools or an object with .tools attribute
-            if isinstance(tools_result, list):
-                tools_list = tools_result
-            elif hasattr(tools_result, 'tools'):
-                tools_list = tools_result.tools
-            else:
-                tools_list = []
-            
-            # Convert to our format
-            tools = [
-                {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.inputSchema.model_dump() if hasattr(tool.inputSchema, 'model_dump') else tool.inputSchema,
+        max_attempts, delay_seconds, _ = self._get_retry_config(server_name)
+        last_error = None
+        
+        for attempt in range(1, max_attempts + 1):
+            try:
+                client = await self._get_client(server_name)
+                
+                # Use native FastMCP list_tools method
+                tools_result = await client.list_tools()
+                
+                # tools_result is either a list of tools or an object with .tools attribute
+                if isinstance(tools_result, list):
+                    tools_list = tools_result
+                elif hasattr(tools_result, 'tools'):
+                    tools_list = tools_result.tools
+                else:
+                    tools_list = []
+                
+                # Convert to our format
+                tools = [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "inputSchema": tool.inputSchema.model_dump() if hasattr(tool.inputSchema, 'model_dump') else tool.inputSchema,
+                    }
+                    for tool in tools_list
+                ]
+                
+                # Apply tool policy filtering
+                filtered_tools = self._filter_tools_by_policy(tools, server_name)
+                
+                logger.info(
+                    "✅ Successfully fetched tools",
+                    server=server_name,
+                    tool_count=len(filtered_tools),
+                    attempt=attempt,
+                )
+                
+                result = {
+                    "tools": filtered_tools,
+                    "server_info": {
+                        "name": server_name,
+                        "protocol": "mcp",
+                    },
+                    "status": "healthy",
+                    "last_check": datetime.utcnow().isoformat(),
                 }
-                for tool in tools_list
-            ]
-            
-            # Apply tool policy filtering
-            filtered_tools = self._filter_tools_by_policy(tools, server_name)
-            
-            logger.info(
-                "✅ Successfully fetched tools",
-                server=server_name,
-                tool_count=len(filtered_tools),
-            )
-            
-            result = {
-                "tools": filtered_tools,
-                "server_info": {
-                    "name": server_name,
-                    "protocol": "mcp",
-                },
-                "status": "healthy",
-                "last_check": datetime.utcnow().isoformat(),
-            }
-            
-            # Cache the result
-            self._tool_cache[server_name] = result
-            self._tool_cache_timestamp[server_name] = time.time()
-            
-            return result
-            
-        except Exception as e:
-            logger.error(
-                "❌ Error fetching tools",
-                server=server_name,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
-            raise
+                
+                # Cache the result
+                self._tool_cache[server_name] = result
+                self._tool_cache_timestamp[server_name] = time.time()
+                
+                return result
+                
+            except Exception as e:
+                last_error = e
+                is_conn_error = self._is_connection_error(e)
+                
+                logger.warning(
+                    f"⚠️ Fetch tools failed (attempt {attempt}/{max_attempts})",
+                    server=server_name,
+                    error=str(e),
+                    is_connection_error=is_conn_error,
+                )
+                
+                # Only retry on connection errors
+                if not is_conn_error:
+                    break
+                
+                # If we have more attempts, invalidate and wait
+                if attempt < max_attempts:
+                    logger.info(
+                        f"🔄 Reconnecting to MCP server for tool discovery",
+                        server=server_name,
+                        delay_seconds=delay_seconds,
+                    )
+                    await self._invalidate_client(server_name)
+                    await asyncio.sleep(delay_seconds)
+        
+        # All attempts failed
+        logger.error(
+            "❌ Error fetching tools after all retries",
+            server=server_name,
+            max_attempts=max_attempts,
+            error=str(last_error),
+        )
+        raise last_error
     
     async def call_tool(
         self,
@@ -421,6 +577,8 @@ class MCPClient:
     ) -> Dict[str, Any]:
         """
         Execute a tool on an MCP server using native MCP protocol.
+        
+        Includes automatic retry with reconnection on connection failures.
         
         Args:
             server_name: Name of the MCP server
@@ -435,45 +593,106 @@ class MCPClient:
             raise ValueError(f"Unknown MCP server: {server_name}")
         
         protocol = server_config.get("protocol", "http")
+        display_name = server_config.get("display_name", server_name)
+        max_attempts, delay_seconds, _ = self._get_retry_config(server_name)
         
         logger.info(
-            "�️  Calling tool on MCP server",
+            "🛠️ Calling tool on MCP server",
             server=server_name,
             tool=tool_name,
             protocol=protocol,
             arguments=arguments,
         )
         
-        try:
-            client = await self._get_client(server_name)
-            
-            # Use native FastMCP call_tool method
-            result = await client.call_tool(tool_name, arguments)
-            
-            logger.info(
-                "✅ Tool execution successful",
-                server=server_name,
-                tool=tool_name,
-            )
-            
-            return {
-                "result": result.content if hasattr(result, 'content') else result,
-                "status": "success",
-                "server": server_name,
-                "tool": tool_name,
-                "protocol": protocol,
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-            
-        except Exception as e:
-            logger.error(
-                "❌ Tool execution failed",
-                server=server_name,
-                tool=tool_name,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
-            raise
+        last_error = None
+        reconnected = False
+        
+        for attempt in range(1, max_attempts + 1):
+            try:
+                client = await self._get_client(server_name)
+                
+                # Use native FastMCP call_tool method
+                result = await client.call_tool(tool_name, arguments)
+                
+                log_msg = "✅ Tool execution successful"
+                if reconnected:
+                    log_msg = "✅ Tool execution successful (after reconnect)"
+                    
+                logger.info(
+                    log_msg,
+                    server=server_name,
+                    tool=tool_name,
+                    attempt=attempt,
+                )
+                
+                response = {
+                    "result": result.content if hasattr(result, 'content') else result,
+                    "status": "success",
+                    "server": server_name,
+                    "tool": tool_name,
+                    "protocol": protocol,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+                
+                # Add reconnect notice if we had to retry
+                if reconnected:
+                    response["notice"] = f"⚠️ Reconnected to {display_name} after connection issue"
+                
+                return response
+                
+            except Exception as e:
+                last_error = e
+                is_conn_error = self._is_connection_error(e)
+                
+                logger.warning(
+                    f"⚠️ Tool call failed (attempt {attempt}/{max_attempts})",
+                    server=server_name,
+                    tool=tool_name,
+                    error=str(e),
+                    is_connection_error=is_conn_error,
+                )
+                
+                # Only retry on connection errors
+                if not is_conn_error:
+                    logger.error(
+                        "❌ Non-connection error, not retrying",
+                        server=server_name,
+                        tool=tool_name,
+                        error=str(e),
+                    )
+                    break
+                
+                # If we have more attempts, invalidate and wait
+                if attempt < max_attempts:
+                    logger.info(
+                        f"🔄 Reconnecting to MCP server (retry {attempt}/{max_attempts - 1})",
+                        server=server_name,
+                        delay_seconds=delay_seconds,
+                    )
+                    await self._invalidate_client(server_name)
+                    await asyncio.sleep(delay_seconds)
+                    reconnected = True
+        
+        # All attempts failed
+        error_msg = f"❌ {display_name} is unavailable after {max_attempts} attempts. Error: {str(last_error)}"
+        logger.error(
+            "❌ Tool execution failed after all retries",
+            server=server_name,
+            tool=tool_name,
+            max_attempts=max_attempts,
+            error=str(last_error),
+        )
+        
+        # Return user-friendly error instead of raising
+        return {
+            "result": None,
+            "status": "error",
+            "error": error_msg,
+            "server": server_name,
+            "tool": tool_name,
+            "protocol": protocol,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
     
     async def health_check(self, server_name: str) -> Dict[str, Any]:
         """

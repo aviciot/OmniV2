@@ -52,11 +52,18 @@ class DatabaseConfig(BaseModel):
 class LLMConfig(BaseModel):
     """LLM (Anthropic Claude) configuration."""
     api_key: str
-    model: str = "claude-3-5-sonnet-20241022"
+    model: str = "claude-sonnet-4-5-20250929"  # Default to Claude 4.5
     max_tokens: int = 4096
     timeout: int = 30
     temperature: float = 0.0
     routing_confidence_threshold: float = 0.7
+
+
+class MCPRetryConfig(BaseModel):
+    """Retry configuration for MCP connections."""
+    max_attempts: int = 2  # Total attempts (1 initial + 1 retry)
+    delay_seconds: float = 1.0  # Wait between retries
+    connection_max_age_seconds: int = 600  # Force refresh after 10 min
 
 
 class MCPAuthConfig(BaseModel):
@@ -83,6 +90,7 @@ class MCPServerConfig(BaseModel):
     timeout_seconds: int = 30
     description: str = ""
     authentication: Optional[MCPAuthConfig] = None
+    retry: Optional[MCPRetryConfig] = None  # Per-MCP retry settings (optional)
     
     # Accept tool_policy as flexible dict (can be string or dict with mode)
     tool_policy: Any = "allow_all"
@@ -162,7 +170,7 @@ class Settings(BaseSettings):
     
     # Anthropic
     ANTHROPIC_API_KEY: str
-    ANTHROPIC_MODEL: str = "claude-3-5-sonnet-20241022"
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-5-20250929"  # Default to Claude 4.5
     ANTHROPIC_MAX_TOKENS: int = 4096
     ANTHROPIC_TIMEOUT: int = 30
     

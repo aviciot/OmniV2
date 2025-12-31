@@ -13,6 +13,12 @@ global:
   # Default timeout for all MCPs (can override per MCP)
   default_timeout_seconds: 30
   
+  # Default retry settings for all MCPs (can override per MCP)
+  retry:
+    max_attempts: 2              # Total attempts (1 initial + 1 retry)
+    delay_seconds: 1             # Wait between retries  
+    connection_max_age_seconds: 600  # Force refresh connections after 10 min
+  
   # Discovery settings
   auto_discovery_enabled: true
   discovery_interval_minutes: 5
@@ -48,6 +54,11 @@ mcps:
     enabled: true
     timeout_seconds: 45
     description: "Multi-database performance monitoring and query analysis (Oracle, MySQL, and advanced DB monitoring)"
+    
+    # Retry settings (override global - Oracle is slow to restart)
+    retry:
+      max_attempts: 3            # More retries for critical MCP
+      delay_seconds: 2           # Wait longer between attempts
     
     # Authentication (if MCP requires API key)
     authentication:
@@ -202,6 +213,66 @@ mcps:
     rate_limit:
       requests_per_minute: 30
       burst: 10
+  
+  # ------------------------------
+  # Informatica PowerCenter MCP
+  # ------------------------------
+  # - name: informatica_mcp
+  #   display_name: "Informatica PowerCenter Monitoring"
+  #   protocol: http
+  #   url: http://omni2-informatica-mcp:9013/mcp  # Docker container name
+  #   enabled: false
+  #   timeout_seconds: 60
+  #   description: "Informatica PowerCenter workflow and session monitoring, performance analysis, and trend tracking (PCI/NPCI environments)"
+  #   
+  #   # Authentication with Bearer token
+  #   authentication:
+  #     enabled: true
+  #     type: "bearer"
+  #     api_key: "${INFORMATICA_MCP_TOKEN}"  # From .env file
+  #   
+  #   # Tags for easier filtering
+  #   tags:
+  #     - informatica
+  #     - powercenter
+  #     - etl
+  #     - workflow
+  #     - performance
+  #     - oracle
+  #   
+  #   # Tool exposure policy
+  #   tool_policy:
+  #     mode: "allow_all"
+  #     # All tools are read-only queries, safe for general use
+  #   
+  #   # Role-based restrictions
+  #   role_restrictions:
+  #     read_only:
+  #       allow_only:
+  #         - "get_help"
+  #         - "get_workflow_history"
+  #         - "get_failed_workflows"
+  #         - "get_running_workflows"
+  #         - "get_session_history"
+  #         - "get_failed_sessions"
+  #     
+  #     power_user:
+  #       allow_all_except:
+  #         - "execute_custom_sql"  # Custom SQL requires higher privileges
+  #     
+  #     etl_analyst:
+  #       allow_all: true
+  #     
+  #     dba:
+  #       allow_all: true
+  #     
+  #     admin:
+  #       allow_all: true
+  #   
+  #   # Rate limiting
+  #   rate_limit:
+  #     requests_per_minute: 30
+  #     burst: 10
   
   # ------------------------------
   # Example: Stdio-based MCP (e.g., local filesystem MCP)

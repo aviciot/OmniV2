@@ -30,24 +30,61 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     - Resource cleanup on shutdown
     """
     # Startup
-    logger.info("🚀 Starting OMNI2 Bridge Application", version=__version__)
+    logger.info("=" * 80)
+    logger.info("🚀 OMNI2 Bridge Application - Starting Up")
+    logger.info("=" * 80)
+    logger.info(f"📦 Version: {__version__}")
+    logger.info(f"🌍 Environment: {settings.app.environment}")
+    logger.info(f"🐛 Debug Mode: {settings.app.debug}")
+    logger.info(f"🔄 Auto-Reload: {settings.app.reload}")
+    logger.info(f"🌐 Host: {settings.app.host}:{settings.app.port}")
+    logger.info("-" * 80)
+    logger.info("🤖 Anthropic Claude Configuration:")
+    logger.info(f"   Model: {settings.llm.model}")
+    logger.info(f"   Max Tokens: {settings.llm.max_tokens}")
+    logger.info(f"   Timeout: {settings.llm.timeout}s")
+    logger.info(f"   API Key: {'✅ Configured' if settings.llm.api_key else '❌ Missing'}")
+    logger.info("-" * 80)
+    logger.info("🗄️  Database Configuration:")
+    logger.info(f"   Host: {settings.database.host}:{settings.database.port}")
+    logger.info(f"   Database: {settings.database.database}")
+    logger.info(f"   User: {settings.database.user}")
+    logger.info(f"   Pool Size: {settings.database.pool_size} (max overflow: {settings.database.max_overflow})")
+    logger.info("-" * 80)
+    logger.info("🔐 Security:")
+    logger.info(f"   CORS Enabled: {settings.security.cors_enabled}")
+    logger.info(f"   Secret Key: {'✅ Configured' if settings.security.secret_key != 'change-this-in-production' else '⚠️  Using Default (Change in Production!)'}")
+    logger.info("-" * 80)
+    logger.info("📡 MCP Servers:")
+    mcp_count = len(settings.mcps.mcps) if hasattr(settings.mcps, 'mcps') else 0
+    logger.info(f"   Registered: {mcp_count} server(s)")
+    if mcp_count > 0:
+        for mcp in settings.mcps.mcps[:5]:  # Show first 5
+            protocol = getattr(mcp, 'protocol', 'http')
+            status = '✅ Enabled' if mcp.enabled else '❌ Disabled'
+            logger.info(f"   • {mcp.name} ({protocol}) - {status}")
+        if mcp_count > 5:
+            logger.info(f"   ... and {mcp_count - 5} more")
+    logger.info("=" * 80)
     
     try:
         # Initialize database connection
+        logger.info("🔌 Connecting to database...")
         await init_db()
         logger.info("✅ Database connection established")
         
-        # Log configuration
-        logger.info(
-            "📋 Configuration loaded",
-            environment=settings.app.environment,
-            debug=settings.app.debug,
-            reload=settings.app.reload,
-        )
+        # Log configuration summary
+        logger.info("✅ Configuration loaded successfully")
         
         # TODO: Initialize MCP discovery service
         # TODO: Load users from database
         # TODO: Start health check scheduler
+        
+        logger.info("=" * 80)
+        logger.info("✅ OMNI2 Bridge Application - Ready!")
+        logger.info(f"📖 API Documentation: http://{settings.app.host}:{settings.app.port}/docs")
+        logger.info(f"🏥 Health Check: http://{settings.app.host}:{settings.app.port}/health")
+        logger.info("=" * 80)
         
         yield
         

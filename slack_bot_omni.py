@@ -878,7 +878,7 @@ def handle_help(ack, respond, command, client):
         print("🌟 User has 'all' permissions, fetching MCP list from health check...")
         # Get all MCPs from health check
         health = omni.health_check()
-        if isinstance(health, dict) and health.get("status") == "healthy":
+        if isinstance(health, dict) and health.get("status") in ["healthy", "degraded"]:
             # Check if mcps is a dict with servers key (new format)
             mcps_data = health.get("mcps", {})
             if isinstance(mcps_data, dict) and "servers" in mcps_data:

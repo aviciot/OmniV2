@@ -23,17 +23,21 @@ class LLMService:
     
     def __init__(self):
         """Initialize LLM service with Anthropic client."""
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+        # Use settings object instead of os.getenv for proper config loading
+        api_key = settings.llm.api_key
         if not api_key or api_key == "your-anthropic-api-key-here":
             raise ValueError(
                 "ANTHROPIC_API_KEY not set. Get one from https://console.anthropic.com/"
             )
         
         self.client = anthropic.Anthropic(api_key=api_key)
-        self.model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
-        self.max_tokens = int(os.getenv("ANTHROPIC_MAX_TOKENS", "4096"))
+        self.model = settings.llm.model  # Use from settings, not os.getenv
+        self.max_tokens = settings.llm.max_tokens  # Use from settings
         self.mcp_client = get_mcp_client()
         self.user_service = get_user_service()
+        
+        # Log the model being used
+        logger.info(f"🤖 LLM Service initialized with model: {self.model}")
         
         # Enable prompt caching (Anthropic-specific feature)
         # NOTE: Prompt caching is Anthropic-specific. When adding other LLM providers,
@@ -327,6 +331,14 @@ When calling tools, use the exact tool name and provide all required arguments.
             
             try:
                 # Call Claude
+                logger.info(
+                    f"🤖 Sending request to Claude",
+                    model=self.model,
+                    max_tokens=self.max_tokens,
+                    user=user_id,
+                    iteration=iteration_count,
+                )
+                
                 response = self.client.messages.create(
                     model=self.model,
                     max_tokens=self.max_tokens,

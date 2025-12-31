@@ -43,11 +43,9 @@ services:
       # Claude 3.5: claude-3-5-haiku-20241022 (fast & cost-effective)
       # Claude 3.0: claude-3-opus-20240229, claude-3-haiku-20240307
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL}
-      - ANTHROPIC_MAX_TOKENS=${ANTHROPIC_MAX_TOKENS}
-      - ANTHROPIC_TIMEOUT=${ANTHROPIC_TIMEOUT}
-      - ANTHROPIC_MAX_TOKENS=4096
-      - ANTHROPIC_TIMEOUT=30
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-5-20250929}
+      - ANTHROPIC_MAX_TOKENS=${ANTHROPIC_MAX_TOKENS:-4096}
+      - ANTHROPIC_TIMEOUT=${ANTHROPIC_TIMEOUT:-30}
       
       # Security
       - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
@@ -62,6 +60,9 @@ services:
       - MCP_ORACLE_URL=http://host.docker.internal:8001
       - MCP_ORACLE_TIMEOUT=30
       - MCP_ORACLE_API_KEY=${MCP_ORACLE_API_KEY:-U1f1mzzSvNKhrtntjJeE0O1KUz-7r7TiuR1-ushQXoc}
+      
+      # Informatica MCP
+      - INFORMATICA_MCP_TOKEN=${INFORMATICA_MCP_TOKEN}
       
       # GitHub MCP (stdio via Docker)
       - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PERSONAL_ACCESS_TOKEN}
@@ -194,6 +195,41 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # ============================================================
+  # Informatica MCP Server (PowerCenter Monitoring)
+  # ============================================================
+  informatica_mcp:
+    image: informatica_mcp:latest  # Use the image built from informatica_mcp folder
+    container_name: omni2-informatica-mcp
+    ports:
+      - "9013:9013"
+    environment:
+      # PCI Database
+      - PCI_HOST=${INFORMATICA_PCI_HOST:-infodb-01.dev.bos.credorax.com}
+      - PCI_PORT=${INFORMATICA_PCI_PORT:-1521}
+      - PCI_SERVICE=${INFORMATICA_PCI_SERVICE:-INFODEV}
+      - PCI_USER=${INFORMATICA_PCI_USER:-infra_rep_ds_dev01}
+      - PCI_PASSWORD=${INFORMATICA_PCI_PASSWORD:-infra_rep_ds_dev0199}
+      # NPCI Database
+      - NPCI_HOST=${INFORMATICA_NPCI_HOST:-infodb-01.dev.bos.credorax.com}
+      - NPCI_PORT=${INFORMATICA_NPCI_PORT:-1521}
+      - NPCI_SERVICE=${INFORMATICA_NPCI_SERVICE:-INFODEV}
+      - NPCI_USER=${INFORMATICA_NPCI_USER:-infra_rep_ds_dev01}
+      - NPCI_PASSWORD=${INFORMATICA_NPCI_PASSWORD:-infra_rep_ds_dev0199}
+      # Authentication (optional)
+      - INFORMATICA_MCP_TOKEN=${INFORMATICA_MCP_TOKEN:-}
+      # Folder filtering (optional)
+      - FOLDER_FILTER=${INFORMATICA_FOLDER_FILTER:-Billing,Data_Services,Credorate,Transformer,Transformer_ODS,Interfaces,PCI_TRANSFORMER,PCI}
+    networks:
+      - omni2-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9013/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # ============================================================
   # Redis (Phase 7 - for caching and sessions)
