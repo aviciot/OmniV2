@@ -407,7 +407,7 @@ When calling tools, use the exact tool name and provide all required arguments.
                     model=self.model,
                     max_tokens=self.max_tokens,
                     system=system_config,
-                    tools=claude_tools if claude_tools else None,
+                    tools=claude_tools,
                     messages=system_messages,
                 )
                 
@@ -600,7 +600,7 @@ When calling tools, use the exact tool name and provide all required arguments.
                         model=self.model,
                         max_tokens=self.max_tokens,
                         system=system_config,
-                        tools=claude_tools if claude_tools else None,
+                        tools=claude_tools,
                         messages=system_messages,
                     ) as stream:
                         async for text in stream.text_stream:
@@ -612,7 +612,7 @@ When calling tools, use the exact tool name and provide all required arguments.
                         model=self.model,
                         max_tokens=self.max_tokens,
                         system=system_config,
-                        tools=claude_tools if claude_tools else None,
+                        tools=claude_tools,
                         messages=system_messages,
                     ) as stream:
                         for text in stream.text_stream:
