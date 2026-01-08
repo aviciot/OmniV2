@@ -4,20 +4,18 @@ User Management Endpoints
 Provides user information, roles, and permissions
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict
 
-from app.config import settings
-from app.services.user_service import UserService
+from app.services.user_service import UserService, get_user_service
 from app.utils.logger import logger
 
 
 router = APIRouter()
-user_service = UserService()
 
 
 @router.get("/users/{email}")
-async def get_user_info(email: str) -> Dict:
+async def get_user_info(email: str, user_service: UserService = Depends(get_user_service)) -> Dict:
     """
     Get user information including role and permissions
     
@@ -35,10 +33,10 @@ async def get_user_info(email: str) -> Dict:
     """
     try:
         # Get user config from users.yaml
-        user_config = user_service.get_user(email)
+        user_config = await user_service.get_user(email)
         
         # Get allowed MCPs
-        allowed_mcps = user_service.get_allowed_mcps(email)
+        allowed_mcps = await user_service.get_allowed_mcps(email)
         
         return {
             "email": email,
@@ -46,9 +44,11 @@ async def get_user_info(email: str) -> Dict:
             "role": user_config.get("role", "read_only"),
             "allowed_mcps": allowed_mcps,
             "allowed_domains": user_config.get("allowed_domains", []),
+            "allowed_databases": user_config.get("allowed_databases", []),
             "teams": user_config.get("teams", []),
             "slack_user_id": user_config.get("slack_user_id"),
-            "is_default": user_config.get("email") == email and email not in [u["email"] for u in settings.users_config.get("super_admins", [])]
+            "allow_all_mcps": user_config.get("allow_all_mcps", False),
+            "is_default": user_config.get("is_default", False),
         }
         
     except Exception as e:
@@ -60,7 +60,7 @@ async def get_user_info(email: str) -> Dict:
 
 
 @router.get("/users")
-async def list_users() -> Dict:
+async def list_users(user_service: UserService = Depends(get_user_service)) -> Dict:
     """
     List all configured users
     
@@ -68,25 +68,13 @@ async def list_users() -> Dict:
         Dict with users list and statistics
     """
     try:
-        users_config = settings.users_config
-        
-        # Extract users list
-        users = users_config.get("users", [])
-        super_admins = users_config.get("super_admins", [])
-        
+        users_list = await user_service.list_users()
+        super_admins = [u for u in users_list if u.get("is_super_admin")]
         return {
-            "total_users": len(users) + len(super_admins),
+            "total_users": len(users_list),
             "super_admins": len(super_admins),
-            "regular_users": len(users),
-            "users": [
-                {
-                    "email": user.get("email"),
-                    "name": user.get("name"),
-                    "role": user.get("role"),
-                    "teams": user.get("teams", [])
-                }
-                for user in users + super_admins
-            ]
+            "regular_users": len(users_list) - len(super_admins),
+            "users": users_list,
         }
         
     except Exception as e:

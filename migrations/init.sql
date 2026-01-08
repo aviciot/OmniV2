@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS users (
     
     -- User preferences
     preferences JSONB DEFAULT '{}',
+    allow_all_mcps BOOLEAN NOT NULL DEFAULT false,
+    allowed_domains TEXT[],
+    allowed_databases TEXT[],
     
     -- Metadata
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -43,6 +46,9 @@ CREATE INDEX idx_users_is_active ON users(is_active);
 COMMENT ON TABLE users IS 'User accounts and authentication';
 COMMENT ON COLUMN users.role IS 'User role: admin, dba, power_user, qa_tester, read_only';
 COMMENT ON COLUMN users.preferences IS 'User-specific preferences (JSON)';
+COMMENT ON COLUMN users.allow_all_mcps IS 'Whether the user can access all MCPs';
+COMMENT ON COLUMN users.allowed_domains IS 'Explicit domain allowlist or ["*"] for all';
+COMMENT ON COLUMN users.allowed_databases IS 'Explicit database allowlist or ["*"] for all';
 
 -- ============================================================
 -- User Teams (Many-to-Many)
@@ -58,6 +64,69 @@ CREATE TABLE IF NOT EXISTS user_teams (
 CREATE INDEX idx_user_teams_user_id ON user_teams(user_id);
 CREATE INDEX idx_user_teams_team_name ON user_teams(team_name);
 CREATE UNIQUE INDEX idx_user_teams_unique ON user_teams(user_id, team_name);
+
+-- ============================================================
+-- Roles Table (Metadata & Permissions)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS roles (
+    name VARCHAR(50) PRIMARY KEY,
+    display_name VARCHAR(255) NOT NULL,
+    description TEXT,
+    color VARCHAR(20),
+    permissions JSONB DEFAULT '{}',
+    rate_limit JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_roles_name ON roles(name);
+
+-- ============================================================
+-- Teams Table (Metadata)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS teams (
+    name VARCHAR(100) PRIMARY KEY,
+    display_name VARCHAR(255) NOT NULL,
+    description TEXT,
+    slack_channel VARCHAR(100),
+    notify_on_errors BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_teams_name ON teams(name);
+
+-- ============================================================
+-- User MCP Permissions (Per-user overrides)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_mcp_permissions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    mcp_name VARCHAR(255) NOT NULL,
+    mode VARCHAR(20) NOT NULL DEFAULT 'inherit',
+    allowed_tools TEXT[],
+    denied_tools TEXT[],
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, mcp_name)
+);
+
+CREATE INDEX idx_user_mcp_permissions_user_id ON user_mcp_permissions(user_id);
+CREATE INDEX idx_user_mcp_permissions_mcp_name ON user_mcp_permissions(mcp_name);
+
+-- ============================================================
+-- User Settings (Singleton Config)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_settings (
+    id SERIAL PRIMARY KEY,
+    default_user JSONB DEFAULT '{}',
+    auto_provisioning JSONB DEFAULT '{}',
+    session JSONB DEFAULT '{}',
+    restrictions JSONB DEFAULT '{}',
+    user_audit JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
 
 -- ============================================================
 -- Audit Logs Table (ENHANCED)

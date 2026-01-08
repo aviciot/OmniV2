@@ -60,6 +60,9 @@ class User(Base):
     
     # Preferences
     preferences = Column(JSONB, default={})
+    allow_all_mcps = Column(Boolean, nullable=False, default=False)
+    allowed_domains = Column(ARRAY(Text))
+    allowed_databases = Column(ARRAY(Text))
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -72,6 +75,7 @@ class User(Base):
     teams = relationship("UserTeam", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
     api_keys = relationship("APIKey", back_populates="user", foreign_keys="APIKey.user_id", cascade="all, delete-orphan")
+    mcp_permissions = relationship("UserMCPPermission", back_populates="user", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', role='{self.role}')>"
@@ -93,6 +97,71 @@ class UserTeam(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "team_name", name="uq_user_team"),
     )
+
+
+class Role(Base):
+    """Role definitions with metadata and permissions."""
+
+    __tablename__ = "roles"
+
+    name = Column(String(50), primary_key=True, index=True)
+    display_name = Column(String(255), nullable=False)
+    description = Column(Text)
+    color = Column(String(20))
+    permissions = Column(JSONB, default={})
+    rate_limit = Column(JSONB, default={})
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class Team(Base):
+    """Team definitions and notification metadata."""
+
+    __tablename__ = "teams"
+
+    name = Column(String(100), primary_key=True, index=True)
+    display_name = Column(String(255), nullable=False)
+    description = Column(Text)
+    slack_channel = Column(String(100))
+    notify_on_errors = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class UserMCPPermission(Base):
+    """Per-user MCP permission overrides."""
+
+    __tablename__ = "user_mcp_permissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    mcp_name = Column(String(255), nullable=False, index=True)
+    mode = Column(String(20), nullable=False, default="inherit")
+    allowed_tools = Column(ARRAY(Text))
+    denied_tools = Column(ARRAY(Text))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User", back_populates="mcp_permissions")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "mcp_name", name="uq_user_mcp_permission"),
+    )
+
+
+class UserSettings(Base):
+    """Singleton user settings (default user config, provisioning rules)."""
+
+    __tablename__ = "user_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    default_user = Column(JSONB, default={})
+    auto_provisioning = Column(JSONB, default={})
+    session = Column(JSONB, default={})
+    restrictions = Column(JSONB, default={})
+    user_audit = Column(JSONB, default={})
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 
 # ============================================================

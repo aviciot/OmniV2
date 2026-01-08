@@ -105,8 +105,8 @@ async def get_audit_logs(
     """
     try:
         # Check permissions
-        requesting_user_data = user_service.get_user(requesting_user)
-        is_admin = requesting_user_data.get("role") == "super_admin"
+        requesting_user_data = await user_service.get_user(requesting_user)
+        is_admin = bool(requesting_user_data.get("is_super_admin")) or requesting_user_data.get("role") == "admin"
         
         # Regular users can only see their own logs
         if not is_admin:
@@ -189,8 +189,8 @@ async def get_audit_stats(
     """
     try:
         # Check permissions
-        requesting_user_data = user_service.get_user(requesting_user)
-        is_admin = requesting_user_data.get("role") == "super_admin"
+        requesting_user_data = await user_service.get_user(requesting_user)
+        is_admin = bool(requesting_user_data.get("is_super_admin")) or requesting_user_data.get("role") == "admin"
         
         # Regular users can only see their own stats
         if not is_admin:

@@ -4,7 +4,7 @@ LLM Service
 Handles communication with Claude (Anthropic) for intelligent MCP routing.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, AsyncGenerator
 import os
 import anthropic
 from anthropic.types import Message, ToolUseBlock, TextBlock
@@ -31,6 +31,12 @@ class LLMService:
             )
         
         self.client = anthropic.Anthropic(api_key=api_key)
+        self.async_client = None
+        if hasattr(anthropic, "AsyncAnthropic"):
+            try:
+                self.async_client = anthropic.AsyncAnthropic(api_key=api_key)
+            except Exception:
+                self.async_client = None
         self.model = settings.llm.model  # Use from settings, not os.getenv
         self.max_tokens = settings.llm.max_tokens  # Use from settings
         self.mcp_client = get_mcp_client()
@@ -44,20 +50,21 @@ class LLMService:
         # make this conditional based on provider type.
         self.use_prompt_caching = True
         
-    async def build_system_prompt(self, user_id: str) -> str:
+    async def build_system_prompt(self, user_id: str, is_admin_dashboard: bool = False) -> str:
         """
         Build dynamic system prompt based on user's permissions.
         
         Args:
             user_id: User email address
+            is_admin_dashboard: Whether request is from admin dashboard (more technical/detailed responses)
             
         Returns:
             System prompt string
         """
-        user = self.user_service.get_user(user_id)
+        user = await self.user_service.get_user(user_id)
         user_role = user.get("role", "read_only")
-        allowed_mcps = self.user_service.get_allowed_mcps(user_id)
-        allowed_domains = self.user_service.get_allowed_domains(user_id)
+        allowed_mcps = await self.user_service.get_allowed_mcps(user_id)
+        allowed_domains = await self.user_service.get_allowed_domains(user_id)
         
         # Get available tools for user's allowed MCPs with tool-level filtering
         tools_catalog = []
@@ -91,7 +98,7 @@ class LLMService:
                     all_tool_names = [t["name"] for t in all_tools_in_mcp]
                     
                     # Apply tool-level permissions
-                    allowed_tool_names = self.user_service.get_user_allowed_tools(
+                    allowed_tool_names = await self.user_service.get_user_allowed_tools(
                         user_id, mcp_name, all_tool_names
                     )
                     
@@ -123,8 +130,63 @@ class LLMService:
             mcps_accessed=len(set(t["mcp"] for t in tools_catalog))
         )
         
-        # Build prompt
-        prompt = f"""You are OMNI2, an intelligent MCP (Model Context Protocol) router and assistant.
+        # Build prompt - different style for admin dashboard
+        if is_admin_dashboard:
+            prompt = f"""You are OMNI2, an advanced MCP (Model Context Protocol) orchestration system for administrators.
+
+Administrator User: {user.get('name', user_id)} ({user_role})
+Context: Admin Dashboard (Technical/Detailed Mode)
+
+AVAILABLE TOOLS:
+You have full access to all MCP tools for system monitoring and management:
+"""
+            for tool in tools_catalog:
+                prompt += f"\n- {tool['mcp']}.{tool['name']}: {tool['description']}"
+            
+            prompt += """
+
+ADMIN-SPECIFIC BEHAVIOR:
+1. **Technical Detail**: Provide detailed technical information, metrics, and logs
+2. **Proactive Insights**: Suggest optimizations, potential issues, and best practices
+3. **System Context**: Include relevant IDs, timestamps, configuration details
+4. **Actionable**: Always provide next steps or recommended actions
+5. **Tool Usage**: Use tools liberally to gather comprehensive data
+6. **Multi-Tool Queries**: Don't hesitate to call multiple tools in sequence for complete analysis
+
+RESPONSE STYLE:
+- Technical but clear (assume admin-level knowledge)
+- Include relevant metrics and thresholds
+- Provide context for numbers (e.g., "142/200 connections (71% utilization)")
+- Highlight anomalies or areas needing attention
+- Use structured formatting (tables, lists, sections)
+- Include timestamps when relevant
+
+WHEN TO USE TOOLS:
+- Status checks → Always use tools (don't rely on cached knowledge)
+- Performance queries → Gather metrics from appropriate MCPs
+- Troubleshooting → Check logs, health, recent changes
+- User info → Query user management tools
+- MCP status → Check health endpoints
+
+Example Admin Response Format:
+*MCP Server Status*
+
+Healthy Servers: 3/4 (75%)
+• informatica_mcp: ✅ Online (uptime: 12h 45m)
+• database_mcp: ✅ Online (uptime: 3d 2h)
+• qa_mcp: ✅ Online (uptime: 8h 12m)
+• analytics_mcp: ❌ Offline (last seen: 2h ago)
+
+*Attention Required:*
+⚠️ analytics_mcp connection lost - check Docker container logs
+⚠️ informatica_mcp restarted recently - verify data pipeline
+
+*System Health: 85%*
+Recommendation: Investigate analytics_mcp failure, review recent deployments
+"""
+        else:
+            # Standard user prompt
+            prompt = f"""You are OMNI2, an intelligent MCP (Model Context Protocol) router and assistant.
 
 User: {user.get('name', user_id)} ({user_role})
 
@@ -132,30 +194,30 @@ AVAILABLE TOOLS:
 You can call these MCP tools to help the user:
 """
         
-        for tool in tools_catalog:
-            prompt += f"\n- {tool['mcp']}.{tool['name']}: {tool['description']}"
+            for tool in tools_catalog:
+                prompt += f"\n- {tool['mcp']}.{tool['name']}: {tool['description']}"
         
-        prompt += f"""
+            prompt += f"""
 
 ALLOWED KNOWLEDGE DOMAINS:
 """
         
-        if allowed_domains == "*":
-            prompt += "- You can answer questions about ANY topic.\n"
-        else:
-            for domain in allowed_domains:
-                domain_desc = {
-                    "general_knowledge": "General questions (TV shows, history, etc.)",
-                    "python_help": "Python programming help and code examples",
-                    "code_review": "Code review and best practices",
-                    "database_help": "Database concepts and SQL help",
-                    "sql_help": "SQL query writing and optimization",
-                    "testing_help": "Software testing strategies",
-                    "data_analysis": "Data analysis and interpretation",
-                }.get(domain, domain)
-                prompt += f"- {domain_desc}\n"
+            if allowed_domains == "*":
+                prompt += "- You can answer questions about ANY topic.\n"
+            else:
+                for domain in allowed_domains:
+                    domain_desc = {
+                        "general_knowledge": "General questions (TV shows, history, etc.)",
+                        "python_help": "Python programming help and code examples",
+                        "code_review": "Code review and best practices",
+                        "database_help": "Database concepts and SQL help",
+                        "sql_help": "SQL query writing and optimization",
+                        "testing_help": "Software testing strategies",
+                        "data_analysis": "Data analysis and interpretation",
+                    }.get(domain, domain)
+                    prompt += f"- {domain_desc}\n"
         
-        prompt += """
+            prompt += """
 RULES:
 1. If the question requires MCP tool → Use function calling to execute the tool
 2. If the question is general knowledge (in allowed domains) → Answer directly
@@ -208,9 +270,9 @@ When calling tools, use the exact tool name and provide all required arguments.
         Returns:
             List of tool definitions for Claude
         """
-        user = self.user_service.get_user(user_id)
+        user = await self.user_service.get_user(user_id)
         user_role = user.get("role", "read_only")
-        allowed_mcps = self.user_service.get_allowed_mcps(user_id)
+        allowed_mcps = await self.user_service.get_allowed_mcps(user_id)
         claude_tools = []
         
         if allowed_mcps == "*":
@@ -241,7 +303,7 @@ When calling tools, use the exact tool name and provide all required arguments.
                     all_tool_names = [t["name"] for t in all_tools_in_mcp]
                     
                     # Apply tool-level permissions
-                    allowed_tool_names = self.user_service.get_user_allowed_tools(
+                    allowed_tool_names = await self.user_service.get_user_allowed_tools(
                         user_id, mcp_name, all_tool_names
                     )
                     
@@ -265,7 +327,7 @@ When calling tools, use the exact tool name and provide all required arguments.
         
         return claude_tools
     
-    async def ask(self, user_id: str, message: str) -> Dict[str, Any]:
+    async def ask(self, user_id: str, message: str, is_admin_dashboard: bool = False) -> Dict[str, Any]:
         """
         Process user question with LLM routing using agentic loop.
         
@@ -275,6 +337,7 @@ When calling tools, use the exact tool name and provide all required arguments.
         Args:
             user_id: User email address
             message: User's question
+            is_admin_dashboard: Whether request is from admin dashboard (affects system prompt)
             
         Returns:
             Response dict with answer and metadata
@@ -283,10 +346,11 @@ When calling tools, use the exact tool name and provide all required arguments.
             "🤖 Starting LLM request",
             user=user_id,
             message=message[:100] + "..." if len(message) > 100 else message,
+            admin_mode=is_admin_dashboard,
         )
         
         # Build system prompt and tools
-        system_prompt = await self.build_system_prompt(user_id)
+        system_prompt = await self.build_system_prompt(user_id, is_admin_dashboard=is_admin_dashboard)
         claude_tools = await self.build_tools_for_claude(user_id)
         
         # Initialize conversation with system prompt
@@ -477,6 +541,173 @@ When calling tools, use the exact tool name and provide all required arguments.
             "tokens_input": total_input_tokens,
             "tokens_output": total_output_tokens,
             "tokens_cached": total_cached_tokens,
+        }
+
+    async def ask_stream(
+        self,
+        user_id: str,
+        message: str,
+        is_admin_dashboard: bool = False
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Stream a chat response using Anthropic streaming API when available.
+
+        Yields:
+            Dict events with type: "token", "done", or "error".
+        """
+        logger.info(
+            "Starting LLM streaming request",
+            user=user_id,
+            message=message[:100] + "..." if len(message) > 100 else message,
+            admin_mode=is_admin_dashboard,
+        )
+
+        system_prompt = await self.build_system_prompt(user_id, is_admin_dashboard=is_admin_dashboard)
+        system_prompt += (
+            "\n\nSTREAMING RULES:\n"
+            "- If you need tools, respond ONLY with tool_use blocks and no text.\n"
+            "- Only emit user-facing text after all tool calls are complete.\n"
+        )
+        claude_tools = await self.build_tools_for_claude(user_id)
+
+        system_messages = [{"role": "user", "content": message}]
+
+        if self.use_prompt_caching:
+            system_config = [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        else:
+            system_config = system_prompt
+
+        total_tool_calls = 0
+        all_tools_used = []
+        iteration_count = 0
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_cached_tokens = 0
+
+        while iteration_count < self.MAX_ITERATIONS:
+            iteration_count += 1
+            final_message = None
+
+            try:
+                if self.async_client is not None:
+                    async with self.async_client.messages.stream(
+                        model=self.model,
+                        max_tokens=self.max_tokens,
+                        system=system_config,
+                        tools=claude_tools if claude_tools else None,
+                        messages=system_messages,
+                    ) as stream:
+                        async for text in stream.text_stream:
+                            if text:
+                                yield {"type": "token", "text": text}
+                        final_message = await stream.get_final_message()
+                else:
+                    with self.client.messages.stream(
+                        model=self.model,
+                        max_tokens=self.max_tokens,
+                        system=system_config,
+                        tools=claude_tools if claude_tools else None,
+                        messages=system_messages,
+                    ) as stream:
+                        for text in stream.text_stream:
+                            if text:
+                                yield {"type": "token", "text": text}
+                        final_message = stream.get_final_message()
+
+                if hasattr(final_message, "usage"):
+                    total_input_tokens += getattr(final_message.usage, "input_tokens", 0)
+                    total_output_tokens += getattr(final_message.usage, "output_tokens", 0)
+                    total_cached_tokens += getattr(final_message.usage, "cache_read_input_tokens", 0)
+
+                tool_uses = [
+                    block for block in final_message.content
+                    if isinstance(block, ToolUseBlock)
+                ]
+
+                if not tool_uses:
+                    text_blocks = [
+                        block for block in final_message.content
+                        if isinstance(block, TextBlock)
+                    ]
+                    final_answer = "\n".join(block.text for block in text_blocks)
+
+                    yield {
+                        "type": "done",
+                        "result": {
+                            "answer": final_answer,
+                            "tool_calls": total_tool_calls,
+                            "tools_used": all_tools_used,
+                            "iterations": iteration_count,
+                            "tokens_input": total_input_tokens,
+                            "tokens_output": total_output_tokens,
+                            "tokens_cached": total_cached_tokens,
+                        },
+                    }
+                    return
+
+                tool_results = []
+                for tool_use in tool_uses:
+                    tool_full_name = tool_use.name
+                    mcp_name, tool_name = tool_full_name.split("__", 1)
+                    try:
+                        tool_result = await self.mcp_client.call_tool(
+                            server_name=mcp_name,
+                            tool_name=tool_name,
+                            arguments=tool_use.input,
+                        )
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use.id,
+                            "content": str(tool_result),
+                        })
+                        all_tools_used.append(f"{mcp_name}.{tool_name}")
+                        total_tool_calls += 1
+                    except Exception as e:
+                        logger.error(
+                            "Tool execution failed",
+                            mcp=mcp_name,
+                            tool=tool_name,
+                            error=str(e),
+                        )
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use.id,
+                            "content": f"Error: {str(e)}",
+                            "is_error": True,
+                        })
+
+                system_messages.append({"role": "assistant", "content": final_message.content})
+                system_messages.append({"role": "user", "content": tool_results})
+
+            except Exception as e:
+                logger.error(
+                    "Streaming LLM request failed",
+                    user=user_id,
+                    iteration=iteration_count,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+                yield {"type": "error", "error": str(e)}
+                return
+
+        yield {
+            "type": "done",
+            "result": {
+                "answer": f"Maximum iteration limit ({self.MAX_ITERATIONS}) reached. Partial results returned.",
+                "tool_calls": total_tool_calls,
+                "tools_used": all_tools_used,
+                "iterations": iteration_count,
+                "warning": "max_iterations_reached",
+                "tokens_input": total_input_tokens,
+                "tokens_output": total_output_tokens,
+                "tokens_cached": total_cached_tokens,
+            },
         }
 
 # Global LLM service instance

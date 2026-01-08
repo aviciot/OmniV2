@@ -363,10 +363,10 @@ async def get_mcp_tools_for_user(
         
         # Filter tools by user permissions
         user_service = get_user_service()
-        allowed_tools = user_service.get_user_allowed_tools(
+        allowed_tools = await user_service.get_user_allowed_tools(
             user_id=user_email,
             mcp_name=mcp_name,
-            all_tools=all_tool_names
+            all_tools=all_tool_names,
         )
         
         # Filter the tool list

@@ -41,6 +41,19 @@ Runs init.sql and seed.sql on an existing database.
 1. Runs `init.sql` (creates tables if not exists)
 2. Runs `seed.sql` (upserts users and MCP servers)
 
+### `import_users_yaml.py`
+Imports `config/users.yaml` into the database (roles, teams, users, and permissions).
+
+**Usage:**
+```powershell
+python scripts/import_users_yaml.py
+```
+
+**What it does:**
+1. Upserts roles + teams from `users.yaml`
+2. Upserts user settings (default user, provisioning, session, audit)
+3. Upserts users, team memberships, and per-MCP permissions
+
 ## Initial Setup
 
 ### Fresh Docker Container
@@ -101,5 +114,6 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ## Migration Files
 
 - `migrations/init.sql` - Complete database schema (consolidated from 001 + 002)
+- `migrations/003_roles_teams_user_settings.sql` - Adds roles, teams, user settings, and per-user MCP permissions
 - `migrations/seed.sql` - Initial data (users, MCP servers)
 - `migrations/archive/` - Old migration files (for reference)
