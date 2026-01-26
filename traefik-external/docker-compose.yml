@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  traefik-external:
+    image: traefik:v3.6
+    container_name: traefik-external
+    restart: unless-stopped
+    
+    ports:
+      - "${TRAEFIK_HTTP_PORT:-8090}:80"
+      - "${TRAEFIK_HTTPS_PORT:-8443}:443"
+      - "${TRAEFIK_DASHBOARD_PORT:-8091}:8080"
+    
+    command:
+      # API & Dashboard
+      - --api.dashboard=true
+      - --api.insecure=true
+      
+      # Docker provider
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=omni2_omni2-network
+      
+      # Entrypoints
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      
+      # Logging
+      - --log.level=INFO
+      - --accesslog=true
+    
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    
+    networks:
+      - omni2_omni2-network
+    
+    labels:
+      - "traefik.enable=true"
+      
+      # Dashboard (no auth for now)
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.localhost`) || PathPrefix(`/dashboard`) || PathPrefix(`/api`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.entrypoints=web"
+      
+      # ForwardAuth middleware (validates JWT via auth_service)
+      - "traefik.http.middlewares.auth-forward.forwardauth.address=http://mcp-auth-service:8700/api/v1/auth/validate"
+      - "traefik.http.middlewares.auth-forward.forwardauth.authResponseHeaders=X-User-Id,X-User-Username,X-User-Role"
+      - "traefik.http.middlewares.auth-forward.forwardauth.trustForwardHeader=true"
+      
+      # CORS middleware (for frontend)
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowmethods=GET,POST,PUT,DELETE,OPTIONS"
+      - "traefik.http.middlewares.cors.headers.accesscontrolalloworiginlist=${CORS_ORIGINS:-http://localhost:3000,http://localhost:8000}"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowheaders=Authorization,Content-Type,X-User-Id,X-User-Email,X-User-Role"
+      - "traefik.http.middlewares.cors.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.cors.headers.addvaryheader=true"
+
+networks:
+  omni2_omni2-network:
+    external: true

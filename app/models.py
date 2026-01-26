@@ -36,59 +36,21 @@ from app.database import Base
 
 
 # ============================================================
-# User Models
+# User-Related Models (Users table is in auth_service schema)
 # ============================================================
 
-class User(Base):
-    """User account model."""
-    
-    __tablename__ = "users"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String(255), unique=True, nullable=False, index=True)
-    name = Column(String(255), nullable=False)
-    role = Column(String(50), nullable=False, default="read_only", index=True)
-    slack_user_id = Column(String(50), unique=True, index=True)
-    
-    is_active = Column(Boolean, nullable=False, default=True, index=True)
-    is_super_admin = Column(Boolean, nullable=False, default=False)
-    
-    # Authentication (Phase 2)
-    password_hash = Column(String(255))
-    last_login = Column(DateTime(timezone=True))
-    login_count = Column(Integer, default=0)
-    
-    # Preferences
-    preferences = Column(JSONB, default={})
-    allow_all_mcps = Column(Boolean, nullable=False, default=False)
-    allowed_domains = Column(ARRAY(Text))
-    allowed_databases = Column(ARRAY(Text))
-    
-    # Timestamps
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
-    created_by = Column(Integer, ForeignKey("users.id"))
-    updated_by = Column(Integer, ForeignKey("users.id"))
-    
-    # Relationships
-    audit_logs = relationship("AuditLog", back_populates="user", foreign_keys="AuditLog.user_id")
-    teams = relationship("UserTeam", back_populates="user", cascade="all, delete-orphan")
-    sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
-    api_keys = relationship("APIKey", back_populates="user", foreign_keys="APIKey.user_id", cascade="all, delete-orphan")
-    mcp_permissions = relationship("UserMCPPermission", back_populates="user", cascade="all, delete-orphan")
-    usage_limit = relationship("UserUsageLimit", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    
-    def __repr__(self):
-        return f"<User(id={self.id}, email='{self.email}', role='{self.role}')>"
+# NOTE: User, Role, Team models are managed by auth_service microservice
+# We only store user_id references here and fetch user data via auth_client
 
 
 class UserUsageLimit(Base):
     """Per-user usage limits with reset windows."""
 
     __tablename__ = "user_usage_limits"
+    __table_args__ = {"schema": "omni2"}
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    user_id = Column(Integer, nullable=False, unique=True, index=True)  # References auth_service.users.id
 
     period_days = Column(Integer, nullable=False, default=30)
     max_requests = Column(Integer)
@@ -100,8 +62,6 @@ class UserUsageLimit(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
-    user = relationship("User", back_populates="usage_limit")
-
     def __repr__(self):
         return f"<UserUsageLimit(user_id={self.user_id}, active={self.is_active})>"
 
@@ -110,56 +70,30 @@ class UserTeam(Base):
     """User team membership (many-to-many)."""
     
     __tablename__ = "user_teams"
+    __table_args__ = (
+        UniqueConstraint("user_id", "team_name", name="uq_user_team"),
+        {"schema": "omni2"}
+    )
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, nullable=False, index=True)  # References auth_service.users.id
     team_name = Column(String(100), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    # Relationships
-    user = relationship("User", back_populates="teams")
-    
-    __table_args__ = (
-        UniqueConstraint("user_id", "team_name", name="uq_user_team"),
-    )
 
-
-class Role(Base):
-    """Role definitions with metadata and permissions."""
-
-    __tablename__ = "roles"
-
-    name = Column(String(50), primary_key=True, index=True)
-    display_name = Column(String(255), nullable=False)
-    description = Column(Text)
-    color = Column(String(20))
-    permissions = Column(JSONB, default={})
-    rate_limit = Column(JSONB, default={})
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
-
-
-class Team(Base):
-    """Team definitions and notification metadata."""
-
-    __tablename__ = "teams"
-
-    name = Column(String(100), primary_key=True, index=True)
-    display_name = Column(String(255), nullable=False)
-    description = Column(Text)
-    slack_channel = Column(String(100))
-    notify_on_errors = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 
 class UserMCPPermission(Base):
     """Per-user MCP permission overrides."""
 
     __tablename__ = "user_mcp_permissions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "mcp_name", name="uq_user_mcp_permission"),
+        {"schema": "omni2"}
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, nullable=False, index=True)  # References auth_service.users.id
     mcp_name = Column(String(255), nullable=False, index=True)
     mode = Column(String(20), nullable=False, default="inherit")
     allowed_tools = Column(ARRAY(Text))
@@ -167,17 +101,14 @@ class UserMCPPermission(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
-    user = relationship("User", back_populates="mcp_permissions")
 
-    __table_args__ = (
-        UniqueConstraint("user_id", "mcp_name", name="uq_user_mcp_permission"),
-    )
 
 
 class UserSettings(Base):
     """Singleton user settings (default user config, provisioning rules)."""
 
     __tablename__ = "user_settings"
+    __table_args__ = {"schema": "omni2"}
 
     id = Column(Integer, primary_key=True, index=True)
     default_user = Column(JSONB, default={})
@@ -197,9 +128,10 @@ class AuditLog(Base):
     """Audit log for all user interactions."""
     
     __tablename__ = "audit_logs"
+    __table_args__ = {"schema": "omni2"}
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    user_id = Column(Integer, index=True)  # References auth_service.users.id
     
     # Request details
     timestamp = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
@@ -234,9 +166,6 @@ class AuditLog(Base):
     was_blocked = Column(Boolean, default=False, index=True)
     block_reason = Column(Text)
     
-    # Relationships
-    user = relationship("User", back_populates="audit_logs", foreign_keys=[user_id])
-    
     def __repr__(self):
         return f"<AuditLog(id={self.id}, user_id={self.user_id}, tool='{self.tool_called}', success={self.success})>"
 
@@ -249,27 +178,33 @@ class MCPServer(Base):
     """MCP server registry."""
     
     __tablename__ = "mcp_servers"
+    __table_args__ = {"schema": "omni2"}
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), unique=True, nullable=False, index=True)
+    name = Column(String(100), unique=True, nullable=False, index=True)
     url = Column(String(500), nullable=False)
-    is_enabled = Column(Boolean, nullable=False, default=True, index=True)
+    description = Column(Text)
+    
+    # Status & config
+    status = Column(String(20), default='active', index=True)
+    protocol = Column(String(20), default='http')
+    timeout_seconds = Column(Integer, default=30)
+    
+    # Retry configuration
+    max_retries = Column(Integer, default=2)
+    retry_delay_seconds = Column(DECIMAL(4, 2), default=1.0)
+    
+    # Authentication
+    auth_type = Column(String(20))
+    auth_config = Column(JSONB)
     
     # Health tracking
-    is_healthy = Column(Boolean, default=True, index=True)
     last_health_check = Column(DateTime(timezone=True))
-    last_seen = Column(DateTime(timezone=True))
-    consecutive_failures = Column(Integer, default=0)
+    health_status = Column(String(20), default='unknown', index=True)
+    error_count = Column(Integer, default=0)
     
     # Metadata
-    version = Column(String(50))
-    capabilities = Column(JSONB)
-    
-    # Statistics
-    total_requests = Column(Integer, default=0)
-    successful_requests = Column(Integer, default=0)
-    failed_requests = Column(Integer, default=0)
-    avg_response_time_ms = Column(Integer)
+    meta_data = Column(JSONB)
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -277,44 +212,33 @@ class MCPServer(Base):
     
     # Relationships
     tools = relationship("MCPTool", back_populates="mcp_server", cascade="all, delete-orphan")
+    health_logs = relationship("MCPHealthLog", back_populates="mcp_server", cascade="all, delete-orphan")
     
     def __repr__(self):
-        return f"<MCPServer(id={self.id}, name='{self.name}', healthy={self.is_healthy})>"
+        return f"<MCPServer(id={self.id}, name='{self.name}', status='{self.status}')>"
 
 
 class MCPTool(Base):
     """MCP tool registry (cached from MCP discovery)."""
     
     __tablename__ = "mcp_tools"
+    __table_args__ = (
+        UniqueConstraint("mcp_server_id", "name", name="uq_mcp_tool"),
+        {"schema": "omni2"}
+    )
     
     id = Column(Integer, primary_key=True, index=True)
-    mcp_server_id = Column(Integer, ForeignKey("mcp_servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    mcp_server_id = Column(Integer, ForeignKey("omni2.mcp_servers.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text)
     input_schema = Column(JSONB)
     
-    # Metadata
-    category = Column(String(100), index=True)
-    tags = Column(ARRAY(Text))
-    is_dangerous = Column(Boolean, default=False, index=True)
-    requires_admin = Column(Boolean, default=False)
-    
-    # Usage tracking
-    call_count = Column(Integer, default=0)
-    success_count = Column(Integer, default=0)
-    failure_count = Column(Integer, default=0)
-    avg_duration_ms = Column(Integer)
-    
     # Timestamps
-    discovered_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    last_called = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     
     # Relationships
     mcp_server = relationship("MCPServer", back_populates="tools")
-    
-    __table_args__ = (
-        UniqueConstraint("mcp_server_id", "name", name="uq_mcp_tool"),
-    )
     
     def __repr__(self):
         return f"<MCPTool(id={self.id}, name='{self.name}', mcp={self.mcp_server_id})>"
@@ -324,13 +248,14 @@ class MCPTool(Base):
 # Session Model (Phase 2)
 # ============================================================
 
-class Session(Base):
+class ChatSession(Base):
     """User session for stateful conversations."""
     
-    __tablename__ = "sessions"
+    __tablename__ = "chat_sessions"
+    __table_args__ = {"schema": "omni2"}
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, nullable=False, index=True)  # References auth_service.users.id
     session_id = Column(String(100), unique=True, nullable=False, index=True)
     
     # Session data
@@ -345,9 +270,6 @@ class Session(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
     
-    # Relationships
-    user = relationship("User", back_populates="sessions")
-    
     def __repr__(self):
         return f"<Session(id={self.id}, user_id={self.user_id}, active={self.is_active})>"
 
@@ -360,9 +282,10 @@ class Notification(Base):
     """User notifications."""
     
     __tablename__ = "notifications"
+    __table_args__ = {"schema": "omni2"}
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id = Column(Integer, index=True)  # References auth_service.users.id
     
     # Notification details
     type = Column(String(50), nullable=False)
@@ -392,9 +315,10 @@ class APIKey(Base):
     """API keys for external integrations."""
     
     __tablename__ = "api_keys"
+    __table_args__ = {"schema": "omni2"}
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, nullable=False, index=True)  # References auth_service.users.id
     
     # Key details
     key_hash = Column(String(255), unique=True, nullable=False, index=True)
@@ -408,7 +332,7 @@ class APIKey(Base):
     is_active = Column(Boolean, default=True, index=True)
     is_revoked = Column(Boolean, default=False)
     revoked_at = Column(DateTime(timezone=True))
-    revoked_by = Column(Integer, ForeignKey("users.id"))
+    revoked_by = Column(Integer)  # References auth_service.users.id
     
     # Usage tracking
     last_used = Column(DateTime(timezone=True))
@@ -420,8 +344,100 @@ class APIKey(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    # Relationships
-    user = relationship("User", back_populates="api_keys", foreign_keys=[user_id])
-    
     def __repr__(self):
         return f"<APIKey(id={self.id}, name='{self.name}', active={self.is_active})>"
+
+
+# ============================================================
+# MCP Health Log Model
+# ============================================================
+
+class MCPHealthLog(Base):
+    """Health and event log for MCP servers."""
+    
+    __tablename__ = "mcp_health_log"
+    __table_args__ = {"schema": "omni2"}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    mcp_server_id = Column(Integer, ForeignKey("omni2.mcp_servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    timestamp = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    status = Column(String(20), nullable=False)
+    response_time_ms = Column(Integer)
+    error_message = Column(Text)
+    meta_data = Column(JSONB)
+    event_type = Column(String(50), index=True)
+    
+    # Relationships
+    mcp_server = relationship("MCPServer", back_populates="health_logs")
+    
+    def __repr__(self):
+        return f"<MCPHealthLog(id={self.id}, mcp={self.mcp_server_id}, status='{self.status}', event='{self.event_type}')>"
+
+
+# ============================================================
+# Omni2 Configuration Model
+# ============================================================
+
+class Omni2Config(Base):
+    """Configuration settings for omni2 behavior."""
+    
+    __tablename__ = "omni2_config"
+    __table_args__ = {"schema": "omni2"}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    config_key = Column(String(100), unique=True, nullable=False, index=True)
+    config_value = Column(JSONB, nullable=False)
+    description = Column(Text)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<Omni2Config(key='{self.config_key}', active={self.is_active})>"
+
+
+
+# ============================================================================
+# Permission Management Models
+# ============================================================================
+
+class RolePermission(Base):
+    """Role-based MCP permissions (developer, qa, dba, etc.)."""
+    
+    __tablename__ = "role_permissions"
+    __table_args__ = (
+        UniqueConstraint("role_name", "mcp_name", name="uq_role_mcp"),
+        {"schema": "omni2"}
+    )
+    
+    id = Column(Integer, primary_key=True, index=True)
+    role_name = Column(String(50), nullable=False, index=True)
+    mcp_name = Column(String(255), nullable=False, index=True)
+    mode = Column(String(20), nullable=False, default="inherit")
+    allowed_tools = Column(ARRAY(Text))
+    denied_tools = Column(ARRAY(Text))
+    description = Column(Text)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<RolePermission(role='{self.role_name}', mcp='{self.mcp_name}', mode='{self.mode}')>"
+
+
+class TeamRole(Base):
+    """Team to role mapping (team inherits role permissions)."""
+    
+    __tablename__ = "team_roles"
+    __table_args__ = {"schema": "omni2"}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    team_name = Column(String(100), unique=True, nullable=False, index=True)
+    default_role = Column(String(50), nullable=False)
+    description = Column(Text)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<TeamRole(team='{self.team_name}', role='{self.default_role}')>"

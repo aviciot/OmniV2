@@ -1,15 +1,65 @@
 # ============================================================
+# SECURITY - NEVER COMMIT THESE
+# ============================================================
+# Environment files with secrets
+.env
+.env.local
+.env.production
+.env.test
+.env.*.local
+traefik-external/.env
+
+# Configuration files with credentials
+config/settings.yaml
+config/mcps.yaml
+config/users.yaml
+config/slack.yaml
+
+# API keys and tokens
+ADMIN_API_KEY.txt
+api_keys.txt
+.api_keys
+tokens.json
+.tokens
+token.txt
+
+# SSH keys and certificates
+id_rsa
+id_rsa.pub
+*.ppk
+*.pem
+*.key
+*.crt
+*.p12
+
+# ============================================================
+# SENSITIVE DATA
+# ============================================================
+# Logs (may contain sensitive info)
+logs/
+*.log
+*.log.*
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+data/
+data/qa_snapshots/
+
+# Backups
+backups/
+*.backup
+*.bak
+*.sql
+
+# ============================================================
 # Python
 # ============================================================
-# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -23,309 +73,72 @@ parts/
 sdist/
 var/
 wheels/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
 
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
 htmlcov/
 .tox/
 .nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
 coverage.xml
 *.cover
-*.py,cover
 .hypothesis/
-.pytest_cache/
-cover/
 
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-Pipfile.lock
-
-# poetry
-poetry.lock
-
-# pdm
-.pdm.toml
-
-# PEP 582
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
+# Virtual environments
 .venv
-env/
 venv/
 ENV/
+env/
 env.bak/
 venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
 
 # ============================================================
 # IDEs & Editors
 # ============================================================
-# VS Code
 .vscode/
-*.code-workspace
-
-# PyCharm
 .idea/
-*.iml
-*.iws
-*.ipr
-
-# Sublime Text
-*.sublime-project
-*.sublime-workspace
-
-# Vim
 *.swp
 *.swo
 *~
-.vim/
-
-# Emacs
-*~
-\#*\#
-.\#*
-
-# ============================================================
-# OS Files
-# ============================================================
-# macOS
 .DS_Store
-.AppleDouble
-.LSOverride
-._*
-
-# Windows
-Thumbs.db
-Thumbs.db:encryptable
-ehthumbs.db
-ehthumbs_vista.db
-*.stackdump
-[Dd]esktop.ini
-$RECYCLE.BIN/
-*.lnk
-
-# Linux
-.directory
-.Trash-*
 
 # ============================================================
-# Project Specific
+# Docker
 # ============================================================
-# Logs
-logs/
-*.log
-*.log.*
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-
-# Environment variables
-.env
-.env.local
-.env.production
-.env.test
-.env.*.local
-
-# Docker volumes
+docker-compose.override.yml
+.docker/
 docker-data/
 postgres-data/
 redis-data/
 
-# Backups
-backups/
-*.backup
-*.bak
-
+# ============================================================
+# Project Specific
+# ============================================================
 # Temporary files
 tmp/
 temp/
 *.tmp
 
-# Secrets
-secrets/
-*.pem
-*.key
-*.crt
-*.p12
-
 # Generated files
 generated/
 
-# Coverage reports
-htmlcov/
-.coverage
-
-# Test databases
+# Test files
+test_*.py
 *_test.db
-test_*.sqlite
 
-# Migrations (if using Alembic)
-# Uncomment if you want to ignore migration files
-# migrations/versions/*.py
+# Archive (old docs)
+docs/archive/
 
 # ============================================================
-# Docker
-# ============================================================
-# Docker Compose override
-docker-compose.override.yml
-
-# Docker volumes
-.docker/
-
-# ============================================================
-# Build Artifacts
-# ============================================================
-*.pyc
-*.pyo
-*.egg
-*.egg-info/
-dist/
-build/
-
-# ============================================================
-# uv (Python package manager)
+# Package Managers
 # ============================================================
 .uv/
 uv.lock
-
-# ============================================================
-# Ruff
-# ============================================================
 .ruff_cache/
-
-# ============================================================
-# Project-Specific Ignores
-# ============================================================
-# Local configuration overrides
-config/settings.local.yaml
-config/mcps.local.yaml
-config/users.local.yaml
-config/slack.local.yaml
-
-# Local data
-data/
-*.csv
-*.json
-
-# Documentation builds
-docs/_build/
-docs/.doctrees/
-
-# Profile outputs
-*.prof
-*.lprof
-
-# ============================================================
-# Security
-# ============================================================
-# SSH keys
-id_rsa
-id_rsa.pub
-*.ppk
-
-# API keys
-api_keys.txt
-.api_keys
-
-# Tokens
-tokens.json
-.tokens
-
-# ============================================================
-# Monitoring & Metrics
-# ============================================================
-# Prometheus data
-prometheus/
-
-# Grafana data
-grafana/
-
-# ============================================================
-# Notes & TODO
-# ============================================================
-TODO.md
-NOTES.md
-.todo/
+poetry.lock
+Pipfile.lock

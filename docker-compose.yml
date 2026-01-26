@@ -26,12 +26,13 @@ services:
       - APP_PORT=8000
       - APP_RELOAD=true
       
-      # Database (use host.docker.internal to reach host PostgreSQL)
-      - DATABASE_HOST=postgres
+      # Database (use omni_pg_db container)
+      - DATABASE_HOST=omni_pg_db
       - DATABASE_PORT=5432
       - DATABASE_NAME=omni
-      - DATABASE_USER=postgres
-      - DATABASE_PASSWORD=postgres
+      - DATABASE_USER=omni
+      - DATABASE_PASSWORD=omni
+      - DATABASE_SCHEMA=omni2
       - DATABASE_POOL_SIZE=20
       - DATABASE_MAX_OVERFLOW=10
       
@@ -75,11 +76,30 @@ services:
     networks:
       - omni2-network
       - mcp-gateway-net
+      - db-net
     
-    depends_on:
-      - postgres
     
     restart: unless-stopped
+    
+    # Traefik labels for external gateway
+    labels:
+      - "traefik.enable=true"
+      
+      # Public endpoints (no auth)
+      - "traefik.http.routers.omni2-public.rule=PathPrefix(`/health`) || PathPrefix(`/docs`) || PathPrefix(`/openapi.json`)"
+      - "traefik.http.routers.omni2-public.entrypoints=web"
+      - "traefik.http.routers.omni2-public.service=omni2"
+      - "traefik.http.routers.omni2-public.priority=50"
+      
+      # Protected endpoints (with ForwardAuth) - use /api/v1 to avoid conflict
+      - "traefik.http.routers.omni2-protected.rule=PathPrefix(`/api/v1`)"
+      - "traefik.http.routers.omni2-protected.entrypoints=web"
+      - "traefik.http.routers.omni2-protected.middlewares=auth-forward,cors"
+      - "traefik.http.routers.omni2-protected.service=omni2"
+      - "traefik.http.routers.omni2-protected.priority=100"
+      
+      # Service definition
+      - "traefik.http.services.omni2.loadbalancer.server.port=8000"
     
     # Health check
     healthcheck:
@@ -92,87 +112,67 @@ services:
   # ============================================================
   # OMNI2 Analytics MCP - Internal Analytics (Admin Only)
   # ============================================================
-  analytics_mcp:
-    build:
-      context: ./Analytics_MCP/server
-      dockerfile: Dockerfile
-    container_name: omni2-analytics-mcp
-    ports:
-      - "8302:8302"
-    volumes:
-      # Mount code for hot-reload
-      - ./Analytics_MCP/server:/app
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/omni
-      - MCP_SERVER_NAME=omni2_analytics_mcp
-      - MCP_PORT=8302
-      - MCP_SERVER_URL=http://analytics_mcp:8302/mcp/
-      - CORS_ORIGINS=http://localhost,http://127.0.0.1,http://omni2
-      - LOG_LEVEL=INFO
-      - AUTO_DISCOVER=true
-    networks:
-      - omni2-network
-    depends_on:
-      - postgres
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8302/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
+  # analytics_mcp:
+  #   build:
+  #     context: ./Analytics_MCP/server
+  #     dockerfile: Dockerfile
+  #   container_name: omni2-analytics-mcp
+  #   ports:
+  #     - "8302:8302"
+  #   volumes:
+  #     # Mount code for hot-reload
+  #     - ./Analytics_MCP/server:/app
+  #   environment:
+  #     - DATABASE_URL=postgresql://omni:omni@host.docker.internal:5435/omni
+  #     - MCP_SERVER_NAME=omni2_analytics_mcp
+  #     - MCP_PORT=8302
+  #     - MCP_SERVER_URL=http://analytics_mcp:8302/mcp/
+  #     - CORS_ORIGINS=http://localhost,http://127.0.0.1,http://omni2
+  #     - LOG_LEVEL=INFO
+  #     - AUTO_DISCOVER=true
+  #   networks:
+  #     - omni2-network
+  #
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8302/healthz"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 20s
 
   # ============================================================
-  # PostgreSQL Database (Optional - use if you don't have host DB)
+  # PostgreSQL Database - REMOVED (using external pg_omni2)
   # ============================================================
-  postgres:
-    image: postgres:16-alpine
-    container_name: omni2-postgres
-    environment:
-      - POSTGRES_DB=omni
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_INITDB_ARGS=--encoding=UTF-8
-    ports:
-      - "5433:5432"  # Use 5433 on host to avoid conflict with existing PostgreSQL
-    volumes:
-      # Mount init scripts (auto-run on first start)
-      - ./migrations/init.sql:/docker-entrypoint-initdb.d/001_init.sql
-      - ./migrations/seed.sql:/docker-entrypoint-initdb.d/002_seed.sql
-      # Persist data
-      - postgres-data:/var/lib/postgresql/data
-    networks:
-      - omni2-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+  # Now using external database at host.docker.internal:5435
+  # Container: omni_pg_db
+  # Database: omni
+  # User: omni
+  # Password: omni
 
   # ============================================================
   # Slack Bot (Phase 6 - Natural language Slack integration)
   # ============================================================
-  slack_bot:
-    build:
-      context: .
-      dockerfile: Dockerfile.slack
-    container_name: omni2-slack-bot
-    environment:
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
-      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
-      - OMNI2_URL=http://omni2:8000
-      - DEFAULT_USER_EMAIL=${DEFAULT_USER_EMAIL:-default@company.com}
-    volumes:
-      - ./config:/app/config:ro  # Mount config directory for slack.yaml
-      - ./slack_bot_omni.py:/app/slack_bot_omni.py  # Hot-reload for development
-      - ../QA_MCP/data/snapshots:/app/data/snapshots  # QA_MCP snapshots folder (shared with qa_mcp)
-    networks:
-      - omni2-network
-    depends_on:
-      - omni2
-    restart: unless-stopped
-    # Note: Slack bot uses Socket Mode (WebSocket), no ports needed
+  # slack_bot:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.slack
+  #   container_name: omni2-slack-bot
+  #   environment:
+  #     - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+  #     - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+  #     - OMNI2_URL=http://omni2:8000
+  #     - DEFAULT_USER_EMAIL=${DEFAULT_USER_EMAIL:-default@company.com}
+  #   volumes:
+  #     - ./config:/app/config:ro  # Mount config directory for slack.yaml
+  #     - ./slack_bot_omni.py:/app/slack_bot_omni.py  # Hot-reload for development
+  #     - ../QA_MCP/data/snapshots:/app/data/snapshots  # QA_MCP snapshots folder (shared with qa_mcp)
+  #   networks:
+  #     - omni2-network
+  #   depends_on:
+  #     - omni2
+  #   restart: unless-stopped
+  #   # Note: Slack bot uses Socket Mode (WebSocket), no ports needed
 
   # ============================================================
   # QA MCP Server - NOW RUNS SEPARATELY via Traefik Gateway
@@ -265,16 +265,21 @@ networks:
   # Connect to MCP Gateway for load-balanced MCPs
   mcp-gateway-net:
     external: true
+  # Connect to PostgreSQL database
+  db-net:
+    external: true
 
 # ============================================================
 # Volumes
 # ============================================================
-volumes:
-  postgres-data:
-    driver: local
+# ============================================================
+# Volumes
+# ============================================================
+# All volumes removed - using external pg_omni2 database
+# volumes:
+  # postgres-data - REMOVED (using external pg_omni2)
   # qa_snapshots - now using local folder mount instead of volume
-  # redis-data:
-  #   driver: local
+  # redis-data - not used yet
 
 # ============================================================
 # Usage Instructions

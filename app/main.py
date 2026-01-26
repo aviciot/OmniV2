@@ -14,10 +14,78 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.config import settings
-from app.database import init_db, close_db
+from app.database import init_db, close_db, get_db
 from app.routers import health
 from app.utils.logger import setup_logging, logger
+from app.services.mcp_registry import get_mcp_registry
+from app.models import Omni2Config
+from sqlalchemy import select
+import asyncio
 
+
+import asyncio
+
+
+# ============================================================
+# Background Tasks
+# ============================================================
+
+async def health_check_loop():
+    """Background task for proactive health monitoring."""
+    interval = 60  # Default interval
+    
+    while True:
+        try:
+            async for db in get_db():
+                # Load config
+                result = await db.execute(
+                    select(Omni2Config).where(Omni2Config.config_key == 'health_check')
+                )
+                config = result.scalar_one_or_none()
+                interval = config.config_value.get('interval_seconds', 60) if config else 60
+                
+                # Check health of all MCPs
+                mcp_registry = get_mcp_registry()
+                for mcp_name in mcp_registry.get_loaded_mcps():
+                    await mcp_registry.health_check(mcp_name, db)
+                
+                break
+            
+            await asyncio.sleep(interval)
+        except Exception as e:
+            logger.error("Health check loop error", app="omni2", error=str(e))
+            await asyncio.sleep(interval)  # Use last known interval instead of hardcoded 60
+
+
+async def hot_reload_loop():
+    """Background task for hot reload."""
+    interval = 30  # Default interval
+    
+    while True:
+        try:
+            async for db in get_db():
+                # Load config
+                result = await db.execute(
+                    select(Omni2Config).where(Omni2Config.config_key == 'hot_reload')
+                )
+                config = result.scalar_one_or_none()
+                interval = config.config_value.get('interval_seconds', 30) if config else 30
+                
+                # Reload if changed
+                mcp_registry = get_mcp_registry()
+                await mcp_registry.reload_if_changed(db)
+                
+                break
+            
+            await asyncio.sleep(interval)
+        except Exception as e:
+            logger.error("Hot reload loop error", app="omni2", error=str(e))
+            await asyncio.sleep(interval)  # Use last known interval instead of hardcoded 30
+
+
+# ============================================================
+# Application Lifespan
+# ============================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -55,23 +123,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(f"   CORS Enabled: {settings.security.cors_enabled}")
     logger.info(f"   Secret Key: {'✅ Configured' if settings.security.secret_key != 'change-this-in-production' else '⚠️  Using Default (Change in Production!)'}")
     logger.info("-" * 80)
-    logger.info("📡 MCP Servers:")
-    mcp_count = len(settings.mcps.mcps) if hasattr(settings.mcps, 'mcps') else 0
-    logger.info(f"   Registered: {mcp_count} server(s)")
-    if mcp_count > 0:
-        for mcp in settings.mcps.mcps[:5]:  # Show first 5
-            protocol = getattr(mcp, 'protocol', 'http')
-            status = '✅ Enabled' if mcp.enabled else '❌ Disabled'
-            logger.info(f"   • {mcp.name} ({protocol}) - {status}")
-        if mcp_count > 5:
-            logger.info(f"   ... and {mcp_count - 5} more")
-    logger.info("=" * 80)
     
     try:
         # Initialize database connection
         logger.info("🔌 Connecting to database...")
         await init_db()
         logger.info("✅ Database connection established")
+        
+        # Load MCPs from database
+        logger.info("📦 Loading MCPs from database...")
+        mcp_registry = get_mcp_registry()
+        async for db in get_db():
+            await mcp_registry.load_from_database(db)
+            break
+        logger.info(f"✅ Loaded {len(mcp_registry.get_loaded_mcps())} MCPs")
+        
+        # Start background tasks
+        logger.info("🔄 Starting background tasks...")
+        asyncio.create_task(health_check_loop())
+        asyncio.create_task(hot_reload_loop())
+        logger.info("✅ Background tasks started")
         
         # Log configuration summary
         logger.info("✅ Configuration loaded successfully")
@@ -92,12 +163,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Shutdown
         logger.info("🛑 Shutting down OMNI2 Bridge Application")
         
+        # Close MCP connections
+        mcp_registry = get_mcp_registry()
+        await mcp_registry.close_all()
+        logger.info("✅ MCP connections closed")
+        
         # Close database connections
         await close_db()
         logger.info("✅ Database connections closed")
-        
-        # TODO: Cleanup MCP connections
-        # TODO: Save any pending audit logs
 
 
 # Initialize FastAPI application
@@ -156,13 +229,15 @@ async def global_exception_handler(request, exc: Exception):
 # ============================================================
 # Register Routers
 # ============================================================
-from app.routers import tools, chat, audit, users
+from app.routers import tools, chat, audit, users, cache, admin
 
 app.include_router(health.router, tags=["Health"])
 app.include_router(tools.router, tags=["MCP Tools"])
 app.include_router(chat.router, tags=["Chat"])
 app.include_router(audit.router, tags=["Audit"])
 app.include_router(users.router, tags=["Users"])
+app.include_router(cache.router, tags=["Cache"])
+app.include_router(admin.router, tags=["Admin"])
 
 # TODO: Add more routers as we build them
 # app.include_router(query.router, prefix="/query", tags=["Query"])

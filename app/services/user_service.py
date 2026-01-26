@@ -16,7 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import AsyncSessionLocal
-from app.models import User, UserTeam, UserMCPPermission, UserSettings
+from app.models import UserTeam, UserMCPPermission, UserSettings, RolePermission, TeamRole
+from app.services.auth_client import get_user as get_user_from_auth
 from app.utils.logger import logger
 
 
@@ -111,42 +112,36 @@ class UserService:
         return {"mode": "none", "tools": [], "deny": []}
 
     async def _load_user_from_db(self, user_id: str) -> Optional[Dict[str, Any]]:
-        async with self._get_session() as session:
-            result = await session.execute(select(User).where(User.email == user_id))
-            user = result.scalar_one_or_none()
-            if not user:
-                return None
+        # Try to get user from auth_service first
+        user_data = await get_user_from_auth(user_id)
+        if user_data:
+            # User exists in auth_service, now get omni2-specific data
+            async with self._get_session() as session:
+                user_db_id = user_data.get("id")
+                
+                team_result = await session.execute(
+                    select(UserTeam.team_name).where(UserTeam.user_id == user_db_id)
+                )
+                teams = [row[0] for row in team_result.all()]
 
-            team_result = await session.execute(
-                select(UserTeam.team_name).where(UserTeam.user_id == user.id)
-            )
-            teams = [row[0] for row in team_result.all()]
+                perm_result = await session.execute(
+                    select(UserMCPPermission).where(UserMCPPermission.user_id == user_db_id)
+                )
+                permissions: Dict[str, Dict[str, Any]] = {}
+                for perm in perm_result.scalars().all():
+                    permissions[perm.mcp_name] = {
+                        "mode": perm.mode or "inherit",
+                        "tools": perm.allowed_tools or [],
+                        "deny": perm.denied_tools or [],
+                    }
 
-            perm_result = await session.execute(
-                select(UserMCPPermission).where(UserMCPPermission.user_id == user.id)
-            )
-            permissions: Dict[str, Dict[str, Any]] = {}
-            for perm in perm_result.scalars().all():
-                permissions[perm.mcp_name] = {
-                    "mode": perm.mode or "inherit",
-                    "tools": perm.allowed_tools or [],
-                    "deny": perm.denied_tools or [],
+                return {
+                    **user_data,
+                    "teams": teams,
+                    "mcp_permissions": permissions,
                 }
-
-            return {
-                "id": user.id,
-                "email": user.email,
-                "name": user.name,
-                "role": user.role,
-                "slack_user_id": user.slack_user_id,
-                "is_active": user.is_active,
-                "is_super_admin": user.is_super_admin,
-                "allow_all_mcps": user.allow_all_mcps,
-                "allowed_domains": user.allowed_domains,
-                "allowed_databases": user.allowed_databases,
-                "teams": teams,
-                "mcp_permissions": permissions,
-            }
+        
+        return None
 
     async def get_user(self, user_id: str) -> Dict[str, Any]:
         cached = self._user_cache.get(user_id)
@@ -237,30 +232,9 @@ class UserService:
                 for entry in combined
             ]
 
-        async with self._get_session() as session:
-            result = await session.execute(select(User))
-            users = result.scalars().all()
-
-            user_ids = [user.id for user in users]
-            team_map: Dict[int, List[str]] = {user_id: [] for user_id in user_ids}
-            if user_ids:
-                team_result = await session.execute(
-                    select(UserTeam.user_id, UserTeam.team_name).where(UserTeam.user_id.in_(user_ids))
-                )
-                for user_id, team_name in team_result.all():
-                    team_map.setdefault(user_id, []).append(team_name)
-
-            return [
-                {
-                    "email": user.email,
-                    "name": user.name,
-                    "role": user.role,
-                    "teams": team_map.get(user.id, []),
-                    "is_super_admin": user.is_super_admin,
-                    "is_active": user.is_active,
-                }
-                for user in users
-            ]
+        # Get users from auth_service (simplified - just return empty for now)
+        # TODO: Implement proper auth_service list_users call
+        return []
 
     async def _get_user_permissions(self, user_id: str) -> Dict[str, Dict[str, Any]]:
         cached = self._user_cache.get(user_id)
@@ -364,6 +338,16 @@ class UserService:
         return result
 
     def _get_role_tools(self, role: str, mcp_name: str, all_tools: List[str]) -> List[str]:
+        """Get tools allowed for a specific role from database."""
+        # Try to get from database first
+        if AsyncSessionLocal:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            role_tools = loop.run_until_complete(self._get_role_tools_from_db(role, mcp_name, all_tools))
+            if role_tools is not None:
+                return role_tools
+        
+        # Fallback to config file
         mcp_config = self._get_mcp_config(mcp_name)
         if not mcp_config:
             return all_tools
@@ -385,6 +369,34 @@ class UserService:
             return [t for t in all_tools if not self._matches_patterns(t, deny)]
 
         return all_tools
+    
+    async def _get_role_tools_from_db(self, role: str, mcp_name: str, all_tools: List[str]) -> Optional[List[str]]:
+        """Get role tools from database."""
+        async with self._get_session() as session:
+            result = await session.execute(
+                select(RolePermission).where(
+                    RolePermission.role_name == role,
+                    RolePermission.mcp_name == mcp_name,
+                    RolePermission.is_active == True
+                )
+            )
+            role_perm = result.scalar_one_or_none()
+            
+            if not role_perm:
+                return None
+            
+            if role_perm.mode == "all":
+                return all_tools
+            elif role_perm.mode == "none":
+                return []
+            elif role_perm.mode == "custom":
+                allowed = role_perm.allowed_tools or []
+                denied = role_perm.denied_tools or []
+                result_tools = [t for t in all_tools if self._matches_patterns(t, allowed)]
+                result_tools = [t for t in result_tools if not self._matches_patterns(t, denied)]
+                return result_tools
+            
+            return None
 
     def _matches_patterns(self, tool_name: str, patterns: List[str]) -> bool:
         for pattern in patterns:

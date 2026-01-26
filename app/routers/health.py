@@ -18,7 +18,7 @@ from app import __version__
 from app.config import settings
 from app.database import check_db_health, get_db
 from app.models import MCPServer
-from app.services.mcp_client import MCPClient, get_mcp_client
+from app.services.mcp_registry import get_mcp_registry
 from app.utils.logger import logger
 from sqlalchemy import select
 
@@ -36,55 +36,39 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> Dict:
         - version: application version
         - timestamp: current server time
         - database: database connection status
-        - mcps: MCP server health summary (from config)
+        - mcps: MCP server health summary (from database)
     """
     logger.debug("Health check requested")
     
     # Check database
     db_health = await check_db_health()
     
-    # Check MCP servers from config (enabled vs reachable)
+    # Check MCP servers from database
     mcp_health = {"status": "unknown", "servers": []}
     try:
-        mcp_client = get_mcp_client()  # Use singleton instance
+        result = await db.execute(select(MCPServer))
+        mcps = result.scalars().all()
         
-        # Get configured MCPs from settings
         configured_mcps = []
-        enabled_mcps = []
+        enabled_count = 0
+        healthy_count = 0
         
-        for server_config in settings.mcps.mcps:
+        for mcp in mcps:
             mcp_info = {
-                "name": server_config.name,
-                "display_name": server_config.display_name,
-                "protocol": server_config.protocol,
-                "url": server_config.url if server_config.protocol in ["http", "sse"] else None,
-                "enabled": server_config.enabled,
-                "status": "unknown",
-                "tools": 0
+                "name": mcp.name,
+                "url": mcp.url,
+                "protocol": mcp.protocol,
+                "enabled": mcp.status == 'active',
+                "status": mcp.health_status,
+                "last_check": mcp.last_health_check.isoformat() if mcp.last_health_check else None
             }
             
             configured_mcps.append(mcp_info)
             
-            if server_config.enabled:
-                enabled_mcps.append(server_config.name)
-                
-                # Try to fetch tools to verify connectivity
-                try:
-                    tools_result = await mcp_client.list_tools(server_config.name)
-                    server_tools = tools_result.get("servers", {}).get(server_config.name, {})
-                    
-                    if server_tools.get("status") == "healthy":
-                        mcp_info["status"] = "healthy"
-                        mcp_info["tools"] = len(server_tools.get("tools", []))
-                    else:
-                        mcp_info["status"] = "unhealthy"
-                        mcp_info["error"] = server_tools.get("error", "Unknown error")
-                except Exception as e:
-                    mcp_info["status"] = "unreachable"
-                    mcp_info["error"] = str(e)
-        
-        healthy_count = sum(1 for mcp in configured_mcps if mcp["status"] == "healthy" and mcp["enabled"])
-        enabled_count = len(enabled_mcps)
+            if mcp.status == 'active':
+                enabled_count += 1
+                if mcp.health_status == 'healthy':
+                    healthy_count += 1
         
         if enabled_count == 0:
             mcp_status = "no_servers"
@@ -128,7 +112,7 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> Dict:
         "environment": settings.app.environment,
         "database": db_health,
         "mcps": mcp_health,
-        "uptime": "N/A",  # TODO: Track uptime
+        "uptime": "N/A",
     }
 
 
@@ -162,32 +146,46 @@ async def liveness_check() -> Dict:
 
 
 @router.get("/health/cache")
-async def cache_stats(mcp_client: MCPClient = Depends(get_mcp_client)) -> Dict:
+async def cache_stats() -> Dict:
     """
     Get tool schema cache statistics.
     
     Returns cache stats for all MCPs.
     """
-    stats = mcp_client.get_cache_stats()
+    mcp_registry = get_mcp_registry()
+    loaded_mcps = mcp_registry.get_loaded_mcps()
+    tools = mcp_registry.get_tools()
+    
     return {
         "success": True,
-        "cache_ttl_seconds": MCPClient.TOOL_CACHE_TTL,
-        **stats
+        "loaded_mcps": len(loaded_mcps),
+        "total_tools": sum(len(t) for t in tools.values()),
+        "mcps": loaded_mcps
     }
 
 
 @router.post("/health/cache/invalidate")
 async def invalidate_cache(
     server_name: Optional[str] = None,
-    mcp_client: MCPClient = Depends(get_mcp_client)
+    db: AsyncSession = Depends(get_db)
 ) -> Dict:
     """
-    Invalidate tool schema cache.
+    Invalidate tool schema cache by reloading MCP.
     
     Args:
-        server_name: Optional specific server to invalidate
+        server_name: Optional specific server to reload
     """
-    mcp_client.invalidate_cache(server_name)
+    mcp_registry = get_mcp_registry()
+    
+    if server_name:
+        await mcp_registry.unload_mcp(server_name, db)
+        result = await db.execute(select(MCPServer).where(MCPServer.name == server_name))
+        mcp = result.scalar_one_or_none()
+        if mcp:
+            await mcp_registry.load_mcp(mcp, db)
+    else:
+        await mcp_registry.load_from_database(db)
+    
     return {
         "success": True,
         "message": f"Cache invalidated for {server_name or 'all servers'}"
